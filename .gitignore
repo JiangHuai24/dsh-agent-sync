@@ -1,0 +1,15 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# runtime state (never commit mirrors or logs)
+*.log
+state.json
+status.json
+*.tmp
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

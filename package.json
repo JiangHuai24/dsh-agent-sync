@@ -1,0 +1,56 @@
+{
+  "name": "@local/agent-sync",
+  "version": "1.2.0",
+  "description": "Mirror WorkBuddy, ZCode, Codex and other coding agents' sessions into DeepSeek Harness as live tasks, one workspace per application.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "workbuddy",
+    "zcode",
+    "codex",
+    "session-sync"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/extremity2740938284-create/dsh-agent-sync.git"
+  },
+  "homepage": "https://github.com/extremity2740938284-create/dsh-agent-sync#readme",
+  "bugs": {
+    "url": "https://github.com/extremity2740938284-create/dsh-agent-sync/issues"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "scripts": {
+    "test": "node --test test/core.test.mjs test/engine.test.mjs",
+    "test:format": "node --test test/format.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "外部 Agent 会话同步",
+    "description": "把 WorkBuddy、ZCode、Codex 的会话实时镜像成本工作区的任务，每产生一轮新对话就追加上去。"
+  }
+}

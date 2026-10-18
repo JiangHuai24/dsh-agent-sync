@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Agent Session Sync",
+    "description": "Mirrors WorkBuddy, ZCode, and Codex sessions into this workspace as live tasks, appending each new turn as it happens."
+  }
+}
