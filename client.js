@@ -266,6 +266,8 @@ window.__ModuleLoader__.load({
             position: 'fixed',
             inset: 0,
             zIndex: 60,
+            // shell.overlay is click-through by default; opt back in while open.
+            pointerEvents: 'auto',
             display: 'flex',
             alignItems: 'flex-start',
             justifyContent: 'center',
