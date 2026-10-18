@@ -64,6 +64,16 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function useOpenState() {
+      const [open, setOpenState] = React.useState(getOpen())
+      React.useEffect(() => {
+        const listener = () => setOpenState(getOpen())
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      }, [])
+      return open
+    }
+
     function normalizeSessions(snapshot) {
       if (!snapshot) return []
       let values
@@ -123,7 +133,7 @@ window.__ModuleLoader__.load({
 
     function SearchAction(props) {
       const wide = props && props.wide !== false
-      const open = React.useSyncExternalStore(subscribe, getOpen, getOpen)
+      const open = useOpenState()
       return h(
         'button',
         {
@@ -151,7 +161,7 @@ window.__ModuleLoader__.load({
     }
 
     function Palette(props) {
-      const open = React.useSyncExternalStore(subscribe, getOpen, getOpen)
+      const open = useOpenState()
       const [query, setQuery] = React.useState('')
       const [hits, setHits] = React.useState([])
       const [busy, setBusy] = React.useState(false)
