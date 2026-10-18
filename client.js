@@ -23,6 +23,7 @@ window.__ModuleLoader__.load({
     const listeners = new Set()
     let isOpen = false
     let ctxRef
+    let services = {}
     const subscribe = (fn) => {
       listeners.add(fn)
       return () => listeners.delete(fn)
@@ -235,7 +236,9 @@ window.__ModuleLoader__.load({
         setBusy(true)
         const timer = setTimeout(async () => {
           try {
-            const result = await ctxRef.sessions.search(q, controller.signal)
+            const sessions = services.sessions
+            if (!sessions) return
+            const result = await sessions.search(q, controller.signal)
             if (controller.signal.aborted) return
             if (result && result.ok === false) {
               setHits([])
@@ -261,10 +264,16 @@ window.__ModuleLoader__.load({
 
       const openResult = (entry) => {
         if (!entry) return
+        const uiWorkspace = services.uiWorkspace
+        if (!uiWorkspace) {
+          console.warn('[agent-sync] uiWorkspace service is unavailable')
+          return
+        }
         try {
-          ctxRef.uiWorkspace.openSession(entry.id)
-        } catch {
-          // opening is best-effort; keep the palette usable
+          uiWorkspace.openSession(entry.id)
+        } catch (error) {
+          console.warn('[agent-sync] openSession failed', error)
+          return
         }
         setOpen(false)
       }
@@ -470,6 +479,8 @@ window.__ModuleLoader__.load({
       __internals: { normalizeSessions, mergeResults, setOpen, getOpen, text },
       apply(ctx) {
         ctxRef = ctx
+        const resolve = (name) => (typeof ctx.get === 'function' ? ctx.get(name) : ctx[name])
+        services = { sessions: resolve('sessions'), uiWorkspace: resolve('uiWorkspace') }
 
         ctx.slots.inject('sidebar.footer.action', () =>
           ctx.slots.register({ name: 'sidebar.footer.action', id: 'agent-sync-search', order: 9, label: text.search }, SearchAction),
