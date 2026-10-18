@@ -12,7 +12,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Unit and engine tests
-        run: node --test test/core.test.mjs test/engine.test.mjs
+      - name: Unit, engine and client tests
+        run: node --test test/core.test.mjs test/engine.test.mjs test/client.test.mjs
       - name: Format contract (skipped without a local DSH install)
         run: node --test test/format.test.mjs

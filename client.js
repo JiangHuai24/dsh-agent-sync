@@ -68,7 +68,7 @@ window.__ModuleLoader__.load({
       if (!snapshot) return []
       let values
       if (Array.isArray(snapshot)) values = snapshot
-      else if (snapshot instanceof Map) values = [...snapshot.values()]
+      else if (typeof snapshot.values === 'function' && typeof snapshot.get === 'function') values = [...snapshot.values()]
       else if (Array.isArray(snapshot.items)) values = snapshot.items
       else if (typeof snapshot === 'object') values = Object.values(snapshot)
       else return []
@@ -86,6 +86,39 @@ window.__ModuleLoader__.load({
         out.push({ id: String(id), title: String(title) })
       }
       return out
+    }
+
+    /**
+     * Merge title matches (local session index) with keyword matches (host
+     * message-content search), de-duplicated by session id, titles first.
+     */
+    function mergeResults(index, hits, rawQuery, maxTitles = 8, maxContent = 20) {
+      const query = String(rawQuery || '').trim().toLowerCase()
+      if (!query) return []
+      const titles = []
+      for (const entry of index) {
+        if (titles.length >= maxTitles) break
+        if (!entry || !entry.title) continue
+        if (!entry.title.toLowerCase().includes(query)) continue
+        titles.push({ id: entry.id, title: entry.title, snippet: '', kind: 'title' })
+      }
+      const seen = new Set(titles.map((entry) => entry.id))
+      const content = []
+      for (const hit of hits) {
+        if (content.length >= maxContent) break
+        if (!hit || !hit.sessionId) continue
+        const id = String(hit.sessionId)
+        if (seen.has(id)) continue
+        seen.add(id)
+        const known = index.find((entry) => entry.id === id)
+        content.push({
+          id,
+          title: (known && known.title) || '',
+          snippet: String(hit.snippet || ''),
+          kind: 'content',
+        })
+      }
+      return [...titles, ...content]
     }
 
     function SearchAction(props) {
@@ -188,27 +221,8 @@ window.__ModuleLoader__.load({
         }
       }, [open, query])
 
-      const q = query.trim().toLowerCase()
-      const titleMatches = q
-        ? index
-            .filter((entry) => entry.title && entry.title.toLowerCase().includes(q))
-            .slice(0, 8)
-            .map((entry) => ({ id: entry.id, title: entry.title, snippet: '', kind: 'title' }))
-        : []
-      const seen = new Set(titleMatches.map((entry) => entry.id))
-      const contentMatches = hits
-        .filter((hit) => hit && hit.sessionId && !seen.has(String(hit.sessionId)))
-        .slice(0, 20)
-        .map((hit) => {
-          const known = index.find((entry) => entry.id === String(hit.sessionId))
-          return {
-            id: String(hit.sessionId),
-            title: (known && known.title) || '',
-            snippet: String(hit.snippet || ''),
-            kind: 'content',
-          }
-        })
-      const results = [...titleMatches, ...contentMatches]
+      const hasQuery = query.trim().length > 0
+      const results = mergeResults(index, hits, query)
       const bounded = Math.max(0, Math.min(active, results.length - 1))
 
       const openResult = (entry) => {
@@ -317,7 +331,7 @@ window.__ModuleLoader__.load({
             'div',
             { style: { maxHeight: '46vh', overflowY: 'auto', padding: 6 } },
             results.length === 0
-              ? h('div', { style: { padding: '14px 10px', fontSize: 13, color: colors.tertiary } }, q ? text.empty : text.typing)
+              ? h('div', { style: { padding: '14px 10px', fontSize: 13, color: colors.tertiary } }, hasQuery ? text.empty : text.typing)
               : results.map((entry, position) => {
                   const selected = position === bounded
                   return h(
@@ -417,6 +431,7 @@ window.__ModuleLoader__.load({
 
     return {
       inject: ['slots'],
+      __internals: { normalizeSessions, mergeResults, setOpen, getOpen, text },
       apply(ctx) {
         ctxRef = ctx
 

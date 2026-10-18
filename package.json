@@ -39,7 +39,7 @@
     "icon.svg"
   ],
   "scripts": {
-    "test": "node --test test/core.test.mjs test/engine.test.mjs",
+    "test": "node --test test/core.test.mjs test/engine.test.mjs test/client.test.mjs",
     "test:format": "node --test test/format.test.mjs"
   },
   "dsh": {
