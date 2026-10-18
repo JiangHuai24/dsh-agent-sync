@@ -169,7 +169,7 @@ window.__ModuleLoader__.load({
           indexJson = '[]'
         }
       }
-      const index = React.useMemo(() => {
+      const hookIndex = React.useMemo(() => {
         try {
           const parsed = JSON.parse(indexJson)
           return Array.isArray(parsed) ? parsed : []
@@ -177,6 +177,30 @@ window.__ModuleLoader__.load({
           return []
         }
       }, [indexJson])
+
+      const [hostIndex, setHostIndex] = React.useState([])
+
+      React.useEffect(() => {
+        if (!open) return undefined
+        const controller = new AbortController()
+        fetch('/agent-sync/sessions', { signal: controller.signal, cache: 'no-store' })
+          .then((response) => (response.ok ? response.json() : null))
+          .then((payload) => {
+            if (!payload || !Array.isArray(payload.sessions)) return
+            setHostIndex(payload.sessions.filter((entry) => entry && entry.id && entry.title))
+          })
+          .catch(() => {
+            // the host index is an enhancement; content search still works
+          })
+        return () => controller.abort()
+      }, [open])
+
+      const index = React.useMemo(() => {
+        const merged = new Map()
+        for (const entry of hostIndex) merged.set(entry.id, { id: entry.id, title: entry.title })
+        for (const entry of hookIndex) if (!merged.has(entry.id)) merged.set(entry.id, entry)
+        return [...merged.values()]
+      }, [hostIndex, hookIndex])
 
       React.useEffect(() => {
         if (!open) return undefined

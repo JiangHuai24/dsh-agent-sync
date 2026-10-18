@@ -95,9 +95,20 @@ function createHarness(basePath) {
     },
   }
 
+  const routes = []
+  const webServer = {
+    register(route) {
+      routes.push(route)
+      return () => {}
+    },
+  }
+
   const ctx = {
     sessionPersistence: persistence,
     workspaceRegistry: registry,
+    get(name) {
+      return name === 'webServer' ? webServer : undefined
+    },
     effect(factory) {
       const dispose = factory()
       disposers.push(dispose)
@@ -111,6 +122,7 @@ function createHarness(basePath) {
     workspaces,
     archived,
     logs,
+    routes,
     dispose() {
       for (const dispose of disposers.reverse()) {
         try {
@@ -188,6 +200,16 @@ test('the engine mirrors a source into a per-app workspace and appends new turns
     assert.equal(title.data.messageSeqs.length, 1, 'the title cites its user message')
     const userEvents = entry.events.filter((event) => event.type === 'user/message')
     assert.equal(userEvents[0].data.content[0].text, '第一问')
+
+    const route = harness.routes.find((candidate) => candidate.path === '/agent-sync/sessions')
+    assert.ok(route, 'the host exposes a title index route')
+    let payload = ''
+    route.handler({}, { writeHead() {}, end(body) { payload = body } })
+    const hostIndex = JSON.parse(payload)
+    assert.ok(
+      hostIndex.sessions.some((item) => item.id === entry.header.id && item.title.includes('集成测试')),
+      'the title index carries the mirrored title',
+    )
 
     // Append a third turn: the earlier turns finish sealing and are appended.
     writeTurn(file, { user: '第三问', assistant: '第三答' })

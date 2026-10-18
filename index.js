@@ -813,6 +813,36 @@ export function apply(ctx, config) {
   const store = loadStore(cfg)
   const adapters = buildAdapters(cfg)
 
+  // The browser cannot read the mirror bookkeeping, and the session hook the
+  // slots expose does not promise a title field. Serve the title index over a
+  // read-only same-origin route instead of guessing a snapshot shape.
+  const mirroredTitles = () => {
+    const items = []
+    for (const record of store.sources.values()) {
+      if (!record || record.archived || !record.title) continue
+      items.push({ id: record.mirrorId, title: record.title, app: record.appId || null })
+    }
+    return items
+  }
+
+  const webServer = typeof ctx.get === 'function' ? ctx.get('webServer') : ctx.webServer
+  if (webServer) {
+    ctx.effect(() =>
+      webServer.register({
+        kind: 'exact',
+        path: '/agent-sync/sessions',
+        handler: (_req, res) => {
+          const payload = JSON.stringify({ at: Date.now(), sessions: mirroredTitles() })
+          res.writeHead(200, {
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'no-store',
+          })
+          res.end(payload)
+        },
+      }),
+    )
+  }
+
   let baseWorkspace
   let workspacesRoot
   let busy = false
