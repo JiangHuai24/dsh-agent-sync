@@ -71,6 +71,20 @@ h('button', { style: footerButtonStyle(open, colors) },
   h('span', null, 'GitHub'))
 ```
 
+### 图标的「光学尺寸」
+
+同一 `iconSize` 不等于同一视觉大小：每个图标在 `viewBox="0 0 24 24"` 里实际占的跨度必须接近 **18 个单位**。
+
+| 图标 | 路径跨度 | 说明 |
+| --- | --- | --- |
+| 放大镜 | 约 17–18 | `M11 4a7 7…` 圆 + 手柄 |
+| 刷新 | 约 18 | 整圆环 |
+| 上箭头 | 17（`M12 20.5V3.5` + 宽 17 的箭头） | 早期版本只占 14，显得小一圈 |
+
+新图标落地前先量一下路径包围盒：跨度明显小于 18 就把路径放大，而不是调 `iconSize`（那样会让整个按钮错位）。
+
+描边统一 `strokeWidth: 2`，`strokeLinecap/Linejoin: round`，SVG 设 `display: block` 以脱离文本基线。
+
 ## 可读性要求
 
 - **纯图标必须**同时给 `title`（tooltip）和 `aria-label`；

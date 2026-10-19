@@ -106,7 +106,7 @@ window.__ModuleLoader__.load({
           strokeLinecap: 'round',
           strokeLinejoin: 'round',
           'aria-hidden': true,
-          style: { flex: 'none' },
+          style: { flex: 'none', display: 'block' },
         },
         ...path.map((d, index) => h('path', { key: index, d })),
       )
