@@ -47,6 +47,41 @@ window.__ModuleLoader__.load({
       for (const fn of listeners) fn()
     }
 
+    // ---- shared footer-action spec (see docs/ui-standard.md) ----
+
+    /** Shared footer-action metrics: one spec, applied to every plugin. */
+    const FOOTER_BUTTON = {
+      height: 28,
+      minWidth: 28,
+      padding: '0 6px',
+      paddingIconOnly: 0,
+      gap: 6,
+      radius: 6,
+      fontSize: 12,
+      iconSize: 16,
+    }
+
+    function footerButtonStyle(active, colors) {
+      return {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: FOOTER_BUTTON.gap,
+        height: FOOTER_BUTTON.height,
+        minWidth: FOOTER_BUTTON.minWidth,
+        padding: FOOTER_BUTTON.padding,
+        background: active ? colors.hover : 'transparent',
+        border: 'none',
+        borderRadius: FOOTER_BUTTON.radius,
+        cursor: 'pointer',
+        color: active ? colors.primary : colors.secondary,
+        font: 'inherit',
+        fontSize: FOOTER_BUTTON.fontSize,
+        lineHeight: 1,
+        whiteSpace: 'nowrap',
+      }
+    }
+
     const colors = {
       panel: 'var(--dsw-alias-bg-overlay)',
       border: 'var(--dsw-alias-border-l2)',
@@ -155,22 +190,9 @@ window.__ModuleLoader__.load({
           'aria-label': text.search,
           'aria-pressed': open ? 'true' : 'false',
           onClick: () => setOpen(!open),
-          style: {
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 28,
-            height: 28,
-            padding: 0,
-            background: open ? colors.hover : 'transparent',
-            border: 'none',
-            borderRadius: 6,
-            cursor: 'pointer',
-            color: open ? colors.primary : colors.secondary,
-            font: 'inherit',
-          },
+          style: footerButtonStyle(open, colors),
         },
-        h(Icon, { path: ['M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14Z', 'M20 20l-4.2-4.2'], size: 17 }),
+        h(Icon, { path: ['M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14Z', 'M20 20l-4.2-4.2'], size: FOOTER_BUTTON.iconSize }),
       )
     }
 
@@ -605,22 +627,12 @@ window.__ModuleLoader__.load({
           'aria-busy': busy ? 'true' : 'false',
           onClick,
           style: {
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 28,
-            height: 28,
-            padding: 0,
-            background: 'transparent',
-            border: 'none',
-            borderRadius: 6,
+            ...footerButtonStyle(false, colors),
             cursor: busy ? 'progress' : 'pointer',
-            color: colors.secondary,
-            font: 'inherit',
             opacity: busy ? 0.6 : 1,
           },
         },
-        h(Icon, { path: ['M21 12a9 9 0 1 1-2.64-6.36', 'M21 3v6h-6'], size: 17 }),
+        h(Icon, { path: ['M21 12a9 9 0 1 1-2.64-6.36', 'M21 3v6h-6'], size: FOOTER_BUTTON.iconSize }),
       )
     }
 
