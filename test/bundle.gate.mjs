@@ -140,6 +140,44 @@ const results = [
   gate('D:/WorkBuddy/dsh-github-flow/client.js', 'github-flow', ['settings.section', 'sidebar.footer.action', 'shell.overlay']),
 ]
 
+// --- combo checks -------------------------------------------------------
+// Every client bundle is concatenated into ONE script by the host, so two
+// plugins declaring the same top-level name break the whole page even though
+// each file is valid on its own.
+const comboFiles = ['D:/WorkBuddy/dsh-agent-sync/client.js', 'D:/WorkBuddy/dsh-github-flow/client.js']
+const comboText = comboFiles.map((f) => fs.readFileSync(f, 'utf8')).join('\n')
+try {
+  new Function(comboText)
+} catch (error) {
+  results.push({ label: 'combo', file: 'combined', problems: ['combined script does not parse: ' + error.message] })
+}
+
+const declared = new Map()
+for (const f of comboFiles) {
+  const source = fs.readFileSync(f, 'utf8')
+  let depth = 0
+  for (const line of source.split('\n')) {
+    const trimmed = line.trim()
+    if (depth === 0) {
+      const match = /^(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/.exec(trimmed)
+      if (match) {
+        const list = declared.get(match[1]) || []
+        list.push(f.split('/').slice(-2).join('/'))
+        declared.set(match[1], list)
+      }
+    }
+    depth += (line.match(/[{([]/g) || []).length - (line.match(/[})\]]/g) || []).length
+  }
+}
+const comboProblems = []
+for (const [name, where] of declared) {
+  const unique = [...new Set(where)]
+  if (unique.length > 1) comboProblems.push('top-level "' + name + '" declared in ' + unique.join(' and '))
+}
+results.push({ label: 'combo', file: 'combined', problems: comboProblems })
+
+// --- end combo checks ---
+
 let failed = false
 for (const result of results) {
   if (result.problems.length === 0) {

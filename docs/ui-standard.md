@@ -136,6 +136,23 @@ h('button', { style: footerButtonStyle(open, colors) },
 | 顶部留白 | `10–12vh` |
 | 关闭 | `Esc` / 点击遮罩 |
 
+## 客户端 bundle 的缓存陷阱
+
+所有插件的 `client.js` 会被拼成**一个脚本**下发，且资源 URL 的 `rev` 由**文件元数据**决定：
+
+```
+rev = sha1(mtimeMs, ctimeMs, size)   // 不是内容哈希
+```
+
+由此有两种必然踩到的坑：
+
+1. **改坏了但 mtime/size 变了** → 得到新的 rev，浏览器刷新会去拉这个坏版本；重启走另一条路径重新解析，于是「重启就好、刷新就崩」。
+2. **内容改了但 mtime/size 没变** → rev 不变，浏览器继续用旧缓存。
+
+因此改完 `client.js` 后必须：**先跑 `npm test`（含 bundle gate）确认可解析且能渲染，再 `touch` 文件刷新 mtime**，让新 rev 一定对应磁盘上的字节。
+
+另一条只在这种拼接模式下才暴露的故障：**两个插件声明了同名顶层标识符**，会让整个页面脚本 SyntaxError。gate 的 `combo` 检查专门防这个。
+
 ## 通用约束
 
 - 颜色只用 `--dsw-alias-*` / `--dsw-specific-*` 主题 token，不写死色值（阴影除外）；
