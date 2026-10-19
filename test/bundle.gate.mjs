@@ -11,10 +11,23 @@ function makeReact() {
   let cursor = 0
   return {
     createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
+    Children: {
+      toArray: (input) => {
+        if (input === null || input === undefined || input === false) return []
+        if (Array.isArray(input)) return input.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false)
+        return [input]
+      },
+    },
     useState: (initial) => {
       const i = cursor++
       if (!(i in store)) store[i] = typeof initial === 'function' ? initial() : initial
-      return [store[i], (next) => { store[i] = typeof next === 'function' ? next(store[i]) : next }]
+      return [
+        store[i],
+        (next) => {
+          const value = typeof next === 'function' ? next(store[i]) : next
+          store[i] = value
+        },
+      ]
     },
     useEffect: (fn) => { effects.push(fn) },
     useCallback: (fn) => fn,
@@ -99,6 +112,19 @@ function gate(file, label, requiredSlots) {
           entry.c({ close: () => {} })
         } catch (error) {
           problems.push(entry.id + ' threw on render: ' + error.message)
+        }
+      }
+
+      // Render with children in every shape React can produce: a single element
+      // (not an array) is the case that used to throw on a spread.
+      for (const entry of reg) {
+        for (const probe of [{ close: () => {}, children: 'single' }, { close: () => {}, children: undefined }, { close: () => {} }]) {
+          React.__reset()
+          try {
+            entry.c(probe)
+          } catch (error) {
+            problems.push(entry.id + ' threw on probe render: ' + error.message)
+          }
         }
       }
     } catch (error) {

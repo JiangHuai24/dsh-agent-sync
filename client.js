@@ -502,7 +502,7 @@ window.__ModuleLoader__.load({
         'div',
         { style: { marginTop: 20 } },
         h('div', { style: { fontSize: 12, fontWeight: 600, color: colors.secondary, marginBottom: 4 } }, title),
-        ...children,
+        ...React.Children.toArray(children),
       )
     }
 
