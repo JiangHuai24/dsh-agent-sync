@@ -1,0 +1,127 @@
+import fs from 'node:fs'
+import vm from 'node:vm'
+
+/**
+ * Structural + behavioural gate for client bundles.
+ * Fails loudly instead of letting a broken bundle reach the app.
+ */
+function makeReact() {
+  const store = []
+  const effects = []
+  let cursor = 0
+  return {
+    createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
+    useState: (initial) => {
+      const i = cursor++
+      if (!(i in store)) store[i] = typeof initial === 'function' ? initial() : initial
+      return [store[i], (next) => { store[i] = typeof next === 'function' ? next(store[i]) : next }]
+    },
+    useEffect: (fn) => { effects.push(fn) },
+    useCallback: (fn) => fn,
+    useMemo: (fn) => fn(),
+    useRef: (v) => ({ current: v }),
+    Fragment: 'Fragment',
+    __reset: () => { cursor = 0 },
+    __runEffects: async () => {
+      for (const fn of effects.splice(0)) fn()
+      await new Promise((r) => setTimeout(r, 120))
+    },
+  }
+}
+
+function gate(file, label, requiredSlots) {
+  const problems = []
+  const text = fs.readFileSync(file, 'utf8')
+
+  // 1. No leaked source: these strings only appear if a patch script wrote its
+  //    own body into the bundle.
+  for (const leak of ['const primitives = `', 'writeSettingsPage', 'export function', 'readFileSync(__filename', "import fs from 'node:fs'"]) {
+    if (text.includes(leak)) problems.push('leaked source fragment: ' + leak)
+  }
+
+  // 2. The factory must be the last top-level statement, and `return {` must
+  //    come after every function it hands to the slot system.
+  const returnAt = text.lastIndexOf('    return {')
+  if (returnAt < 0) problems.push('no module return block')
+  for (const name of ['footerButtonStyle', 'SettingsSection']) {
+    const at = text.lastIndexOf('function ' + name)
+    if (at < 0) problems.push('missing function ' + name)
+    else if (returnAt >= 0 && at > returnAt) problems.push(name + ' is declared after the module return (dead code)')
+  }
+
+  // 3. Syntax.
+  try {
+    new Function(text)
+  } catch (error) {
+    problems.push('syntax: ' + error.message)
+  }
+
+  // 4. Behaviour: every registered slot component must render without throwing.
+  if (problems.length === 0) {
+    const React = makeReact()
+    let captured = null
+    const sandbox = {
+      window: {
+        __ModuleLoader__: { load: (s) => { captured = s } },
+        localStorage: { getItem: () => '1', setItem: () => {} },
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      },
+      navigator: { language: 'zh-CN', clipboard: { writeText: async () => {} } },
+      document: { addEventListener: () => {}, removeEventListener: () => {} },
+      console,
+      setTimeout,
+      clearTimeout,
+      fetch: async () => ({
+        ok: true,
+        json: async () => ({
+          pollMs: 3000, sealAfterMs: 12000, scanEveryMs: 5000, maxSessionsPerApp: 0,
+          orphanAfterMinutes: 60, backupKeep: 10, sweepMissing: false, backupOnStart: true,
+          workspacesRoot: null, mirrored: 0, errors: 0, orphaned: 0, apps: [],
+          repos: [], skill: 'github-push', version: 'test', script: 'x', repo: 'y',
+        }),
+      }),
+    }
+    sandbox.globalThis = sandbox
+    vm.createContext(sandbox)
+    try {
+      vm.runInContext(text, sandbox, { filename: file })
+      const mod = captured.factory((n) => (n === 'react' ? React : (() => { throw new Error('require ' + n) })()))
+      const reg = []
+      mod.apply({ effect: (fn) => fn(), slots: { inject: (n, fn) => fn(), register: (o, c) => { reg.push({ ...o, c }); return () => {} } } })
+
+      for (const slot of requiredSlots) {
+        if (!reg.some((r) => r.name === slot)) problems.push('slot not registered: ' + slot)
+      }
+      for (const entry of reg) {
+        React.__reset()
+        try {
+          entry.c({ close: () => {} })
+        } catch (error) {
+          problems.push(entry.id + ' threw on render: ' + error.message)
+        }
+      }
+    } catch (error) {
+      problems.push('module load: ' + error.message)
+    }
+  }
+
+  return { label, file, problems }
+}
+
+const results = [
+  gate('D:/WorkBuddy/dsh-agent-sync/client.js', 'agent-sync', ['settings.section', 'sidebar.footer.action', 'shell.overlay']),
+  gate('D:/WorkBuddy/dsh-github-flow/client.js', 'github-flow', ['settings.section', 'sidebar.footer.action', 'shell.overlay']),
+]
+
+let failed = false
+for (const result of results) {
+  if (result.problems.length === 0) {
+    console.log('PASS  ' + result.label)
+  } else {
+    failed = true
+    console.log('FAIL  ' + result.label)
+    for (const problem of result.problems) console.log('        - ' + problem)
+  }
+}
+if (failed) process.exitCode = 1

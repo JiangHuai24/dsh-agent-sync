@@ -9,6 +9,16 @@
 ---
 
 
+## 自检
+
+`npm test` 除了单元测试，还会跑 `test/bundle.gate.mjs`：
+
+- 检查 client bundle 里没有泄漏的补丁脚本文本；
+- 检查 `footerButtonStyle` / `SettingsSection` 等函数声明在 `return {` **之前**（否则是死代码，界面空白）；
+- 用 vm + React shim 真实执行每个已注册的 slot 组件，捕获渲染异常。
+
+这条检查来自一次真实事故（bundle 被写坏导致整个 web boot 失败），不要绕过。
+
 ## UI 规范
 
 侧边栏底部按钮、设置页、浮层面板的尺寸与交互统一见 [docs/ui-standard.md](docs/ui-standard.md)。新增插件请照此实现，不要另起数值。
