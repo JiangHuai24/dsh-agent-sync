@@ -841,6 +841,33 @@ export function apply(ctx, config) {
         },
       }),
     )
+    ctx.effect(() =>
+      webServer.register({
+        kind: 'exact',
+        path: '/agent-sync/status',
+        handler: (_req, res) => {
+          const report = lastReport || { at: null, workspacesRoot: workspacesRoot || null, apps: [], sources: [] }
+          const payload = JSON.stringify({
+            at: report.at,
+            workspacesRoot: report.workspacesRoot || workspacesRoot || null,
+            mirrored: report.sources.filter((item) => item.emittedTurns > 0).length,
+            errors: report.sources.filter((item) => item.error).length,
+            apps: report.apps.map((app) => ({
+              id: app.id,
+              name: app.name,
+              scanned: app.scanned,
+              workspace: app.workspace,
+              error: app.error,
+            })),
+          })
+          res.writeHead(200, {
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'no-store',
+          })
+          res.end(payload)
+        },
+      }),
+    )
   }
 
   let baseWorkspace
@@ -849,6 +876,7 @@ export function apply(ctx, config) {
   let stopped = false
   let dirty = false
   let statusCache = ''
+  let lastReport = null
   const workspaceCache = new Map()
   let pruned = false
 
@@ -1245,6 +1273,7 @@ export function apply(ctx, config) {
         if (ws) summary.workspace = { title: ws.title, path: ws.path }
       }
       await sweepMissingSources(seen)
+      lastReport = report
       saveStatus(report)
       if (dirty) {
         saveStore(store, cfg)

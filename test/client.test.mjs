@@ -67,9 +67,10 @@ test('apply registers the search action, the palette and the refresh action', ()
   }
   mod.apply(ctx)
   const ids = registered.map((entry) => entry.options.id).sort()
-  assert.deepEqual(ids, ['agent-sync-refresh', 'agent-sync-search', 'agent-sync-search-palette'])
+  assert.deepEqual(ids, ['agent-sync', 'agent-sync-refresh', 'agent-sync-search', 'agent-sync-search-palette'])
   assert.equal(registered.filter((entry) => entry.options.name === 'sidebar.footer.action').length, 2)
   assert.equal(registered.filter((entry) => entry.options.name === 'shell.overlay').length, 1)
+  assert.equal(registered.filter((entry) => entry.options.name === 'settings.section').length, 1)
 })
 
 test('Ctrl+K toggles the palette and Escape-free keyboard handling is passive', () => {

@@ -14,6 +14,16 @@ window.__ModuleLoader__.load({
       typing: zh ? '开始输入以搜索' : 'Type to search',
       content: zh ? '匹配消息' : 'Message match',
       title: zh ? '标题匹配' : 'Title match',
+      settingsTitle: zh ? '外部会话同步' : 'Agent Session Sync',
+      settingsHint: zh
+        ? '其他 AI 助手的会话会实时镜像成任务，每个应用一个工作区；具体配置在 cordis.patch.yml 的 agent-sync 行。'
+        : 'Sessions from other coding agents are mirrored as tasks, one workspace per application. Configuration lives in the agent-sync row of cordis.patch.yml.',
+      mirrored: zh ? '镜像任务' : 'Mirrored',
+      appsLabel: zh ? '应用' : 'Apps',
+      errorsLabel: zh ? '错误' : 'Errors',
+      reload: zh ? '刷新数据' : 'Reload',
+      workspaceRoot: zh ? '工作区根目录' : 'Workspaces root',
+      scanned: zh ? '扫描' : 'scanned',
     }
 
     /* ------------------------------------------------------------------ */
@@ -439,6 +449,100 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function SettingsSection() {
+      const [status, setStatus] = React.useState(null)
+      const [error, setError] = React.useState('')
+      const load = React.useCallback(() => {
+        fetch('/agent-sync/status', { cache: 'no-store' })
+          .then((response) => (response.ok ? response.json() : null))
+          .then((payload) => {
+            if (!payload) return
+            setStatus(payload)
+            setError('')
+          })
+          .catch((failure) => setError(String(failure && failure.message)))
+      }, [])
+      React.useEffect(() => {
+        load()
+      }, [load])
+
+      const apps = (status && status.apps) || []
+      const row = (label, value) =>
+        h(
+          'div',
+          {
+            style: {
+              display: 'flex',
+              alignItems: 'baseline',
+              gap: 12,
+              padding: '8px 0',
+              borderBottom: '1px solid ' + colors.borderSoft,
+            },
+          },
+          h('span', { style: { width: 120, flex: 'none', fontSize: 12, color: colors.secondary } }, label),
+          h('span', { style: { fontSize: 13, color: colors.primary, wordBreak: 'break-all' } }, value),
+        )
+
+      return h(
+        'div',
+        { style: { padding: '4px 2px', maxWidth: 720 } },
+        h('h2', { style: { margin: '0 0 6px', fontSize: 16, color: colors.primary } }, text.settingsTitle),
+        h('p', { style: { margin: '0 0 16px', fontSize: 12, color: colors.secondary, lineHeight: 1.6 } }, text.settingsHint),
+        row(text.mirrored, String((status && status.mirrored) || 0)),
+        row(text.appsLabel, String(apps.length)),
+        row(text.errorsLabel, String((status && status.errors) || 0)),
+        row(text.workspaceRoot, (status && status.workspacesRoot) || '—'),
+        apps.length > 0
+          ? h(
+              'div',
+              { style: { marginTop: 18 } },
+              h('div', { style: { fontSize: 12, color: colors.secondary, marginBottom: 8 } }, text.appsLabel),
+              ...apps.map((app) =>
+                h(
+                  'div',
+                  {
+                    key: app.id,
+                    style: {
+                      display: 'flex',
+                      alignItems: 'baseline',
+                      gap: 12,
+                      padding: '6px 0',
+                      borderBottom: '1px solid ' + colors.borderSoft,
+                    },
+                  },
+                  h('span', { style: { width: 120, flex: 'none', fontSize: 13, color: colors.primary } }, app.name),
+                  h(
+                    'span',
+                    { style: { fontSize: 12, color: colors.secondary } },
+                    text.scanned + ' ' + app.scanned + (app.workspace ? ' · ' + app.workspace.path : '') + (app.error ? ' · ' + app.error : ''),
+                  ),
+                ),
+              ),
+            )
+          : null,
+        error ? h('div', { style: { marginTop: 12, fontSize: 12, color: 'var(--dsw-alias-state-error-primary)' } }, error) : null,
+        h(
+          'button',
+          {
+            type: 'button',
+            onClick: load,
+            style: {
+              marginTop: 18,
+              padding: '6px 12px',
+              borderRadius: 6,
+              border: '1px solid ' + colors.border,
+              background: 'transparent',
+              color: colors.primary,
+              cursor: 'pointer',
+              font: 'inherit',
+              fontSize: 12,
+            },
+          },
+          text.reload,
+        ),
+      )
+    }
+
     function RefreshAction(props) {
       const wide = props && props.wide !== false
       const [busy, setBusy] = React.useState(false)
@@ -495,6 +599,10 @@ window.__ModuleLoader__.load({
 
         ctx.slots.inject('sidebar.footer.action', () =>
           ctx.slots.register({ name: 'sidebar.footer.action', id: 'agent-sync-refresh', order: 10, label: text.refresh }, RefreshAction),
+        )
+
+        ctx.slots.inject('settings.section', () =>
+          ctx.slots.register({ name: 'settings.section', id: 'agent-sync', order: 36, label: text.settingsTitle }, SettingsSection),
         )
 
         ctx.effect(() => {
