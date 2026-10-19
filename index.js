@@ -1082,6 +1082,36 @@ export function apply(ctx, config) {
     ctx.effect(() =>
       webServer.register({
         kind: 'exact',
+        path: '/agent-sync/import',
+        handler: async (req, res) => {
+          if (req.method !== 'POST') {
+            res.writeHead(405).end('method not allowed')
+            return
+          }
+          const body = await readJsonBody(req)
+          const target = typeof body.path === 'string' ? body.path.trim() : ''
+          const title = typeof body.title === 'string' ? body.title.trim() : ''
+          const appId = typeof body.app === 'string' && body.app.trim() ? body.app.trim() : 'manual'
+          if (!target) {
+            sendJson(res, { ok: false, error: '请填写会话文件或目录路径' })
+            return
+          }
+          if (!fs.existsSync(target)) {
+            sendJson(res, { ok: false, error: '路径不存在：' + target })
+            return
+          }
+          try {
+            const result = await importFromPath({ target, title, appId })
+            sendJson(res, { ok: true, ...result })
+          } catch (error) {
+            sendJson(res, { ok: false, error: String(error && error.message) })
+          }
+        },
+      }),
+    )
+    ctx.effect(() =>
+      webServer.register({
+        kind: 'exact',
         path: '/agent-sync/status',
         handler: (_req, res) => {
           const report = lastReport || { at: null, workspacesRoot: workspacesRoot || null, apps: [], sources: [] }
@@ -1266,6 +1296,73 @@ export function apply(ctx, config) {
       }
     }
     return ws
+  }
+
+  /**
+   * Import one session file, or every session file under a directory, without
+   * requiring it to sit in an application's standard root. Parsing reuses the
+   * same primitives the automatic adapters use, so turns group identically.
+   */
+  const importFromPath = async ({ target, title, appId }) => {
+    const stat = fs.statSync(target)
+    const files = []
+    if (stat.isDirectory()) {
+      const walk = (dir, depth) => {
+        if (depth > 6) return
+        let entries = []
+        try {
+          entries = fs.readdirSync(dir, { withFileTypes: true })
+        } catch {
+          return
+        }
+        for (const entry of entries) {
+          const full = path.join(dir, entry.name)
+          if (entry.isDirectory()) walk(full, depth + 1)
+          else if (/\.(jsonl|json|ndjson|log)$/i.test(entry.name)) files.push(full)
+        }
+      }
+      walk(target, 0)
+    } else {
+      files.push(target)
+    }
+    if (files.length === 0) return { imported: 0, scanned: 0, error: '没有找到 .jsonl/.json/.ndjson/.log 文件' }
+
+    let imported = 0
+    const failures = []
+    for (const file of files.slice(0, 200)) {
+      const key = 'manual:' + crypto.createHash('sha1').update(file).digest('hex').slice(0, 16)
+      try {
+        const st = createSourceState(key)
+        st.fp = file
+        await readNewLines(st, file, parseAnyRecord)
+        if (!st.items.length) {
+          failures.push({ file, error: '没有可导入的对话内容' })
+          continue
+        }
+        const described = describe(st, { id: appId || 'manual', name: appId || '手动导入' })
+        if (!described) {
+          failures.push({ file, error: '解析后没有对话轮次' })
+          continue
+        }
+        described.key = key
+        described.appId = appId || 'manual'
+        if (title) described.title = title
+        if (!described.title) described.title = path.basename(file).replace(/\.(jsonl|json|ndjson|log)$/i, '')
+        await syncSource(described)
+        imported += 1
+      } catch (error) {
+        failures.push({ file, error: String(error && error.message) })
+      }
+    }
+    dirty = true
+    const ws = ensureWorkspacesRoot()
+    return {
+      imported,
+      scanned: files.length,
+      failed: failures.length,
+      failures: failures.slice(0, 5),
+      workspace: ws ? ws.title : null,
+    }
   }
 
   const attach = async (id, ws) => {
