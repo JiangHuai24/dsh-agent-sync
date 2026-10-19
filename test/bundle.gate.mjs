@@ -178,6 +178,45 @@ results.push({ label: 'combo', file: 'combined', problems: comboProblems })
 
 // --- end combo checks ---
 
+
+// --- host halves ---------------------------------------------------------
+// "import failed" is reported by the host when a plugin cannot be imported or
+// throws while applying. Test both, with and without services.
+const hostCases = [
+  { name: 'agent-sync', file: 'file:///D:/WorkBuddy/dsh-agent-sync/index.js' },
+  { name: 'github-flow', file: 'file:///D:/WorkBuddy/dsh-github-flow/index.js' },
+]
+
+for (const hostCase of hostCases) {
+  const hostProblems = []
+  let mod
+  try {
+    mod = await import(hostCase.file + '?gate=' + Date.now())
+  } catch (error) {
+    hostProblems.push('import threw: ' + error.message)
+    results.push({ label: 'host ' + hostCase.name, file: hostCase.file, problems: hostProblems })
+    continue
+  }
+  if (!mod || typeof mod.apply !== 'function') hostProblems.push('no apply export')
+
+  // Zero-service context: must degrade, never throw.
+  const bare = {
+    effect: (fn) => {
+      const dispose = fn()
+      if (typeof dispose === 'function') dispose()
+    },
+    get: () => undefined,
+    on: () => {},
+  }
+  try {
+    mod.apply(bare, {})
+  } catch (error) {
+    hostProblems.push('apply threw without services: ' + error.message)
+  }
+
+  results.push({ label: 'host ' + hostCase.name, file: hostCase.file, problems: hostProblems })
+}
+
 let failed = false
 for (const result of results) {
   if (result.problems.length === 0) {
