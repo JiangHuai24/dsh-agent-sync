@@ -834,68 +834,109 @@ export function apply(ctx, config) {
    * other key (sources, comments, unknown options) is preserved verbatim, so a
    * save from the settings page never drops configuration it does not know.
    */
+
+  // --- safe patch persistence (adopted from kuaiyukuaikuai/dsh-agent-sync) ---
+
+  const PATCH_MARK_START = '# --- agent-sync managed (config; edit via the settings page) ---'
+  const PATCH_MARK_END = '# --- end agent-sync managed ---'
+
+  /** Write a file atomically so an interrupted write cannot truncate it. */
+  const atomicWrite = (file, content) => {
+    const dir = path.dirname(file)
+    const tmp = path.join(dir, '.' + path.basename(file) + '.tmp-' + process.pid + '-' + Date.now())
+    fs.writeFileSync(tmp, content, 'utf8')
+    try {
+      fs.renameSync(tmp, file)
+    } catch (error) {
+      try { fs.rmSync(tmp, { force: true }) } catch { /* best effort */ }
+      throw error
+    }
+  }
+
+  /** Keep one rolling backup next to the file before the first modification. */
+  const backupOnce = (file) => {
+    try {
+      const backup = file + '.agent-sync-backup'
+      if (fs.existsSync(file) && !fs.existsSync(backup)) {
+        fs.copyFileSync(file, backup)
+      }
+    } catch {
+      // a backup is a convenience, never a reason to fail the write
+    }
+  }
+
+  /**
+   * Remove the managed block so the caller can re-render it, and drop a bare
+   * `[]` root (the loader expects an array of patch entries, not a flow empty).
+   */
+  const stripManagedSection = (text) => {
+    const kept = []
+    let inside = false
+    for (const line of String(text || '').split(/\r?\n/)) {
+      const trimmed = line.trim()
+      if (trimmed === PATCH_MARK_START) {
+        inside = true
+        continue
+      }
+      if (trimmed === PATCH_MARK_END) {
+        inside = false
+        continue
+      }
+      if (inside) continue
+      if (trimmed === '[]') continue
+      kept.push(line)
+    }
+    while (kept.length && kept[kept.length - 1].trim() === '') kept.pop()
+    return kept.join('\n')
+  }
+
+  /** Render our config as one patch entry under the managed markers. */
+  const renderManagedConfig = (values) => {
+    const rows = []
+    rows.push(PATCH_MARK_START)
+    rows.push('- id: agent-sync')
+    rows.push("  name: '@local/agent-sync'")
+    rows.push('  config:')
+    for (const key of Object.keys(values)) {
+      const value = values[key]
+      if (value === undefined) continue
+      const rendered = typeof value === 'string' ? JSON.stringify(value) : String(value)
+      rows.push('    ' + key + ': ' + rendered)
+    }
+    rows.push(PATCH_MARK_END)
+    return rows.join('\n')
+  }
+
+  /** A light structural check: the file must still describe a YAML entry list. */
+  const looksLikePatchList = (text) => {
+    const meaningful = text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#'))
+    if (meaningful.length === 0) return true
+    return meaningful[0].startsWith('- ')
+  }
+
   const writeProfileConfig = (next) => {
+    // The user-owned profile layer wins; the packaged patch is only a fallback
+    // for profiles that carry no patch of their own.
     const candidates = [
-      path.join(PACKAGE_DIR, 'cordis.patch.yml'),
       process.env.DSH_PROFILE_DIR ? path.join(process.env.DSH_PROFILE_DIR, 'cordis.patch.yml') : undefined,
+      path.join(PACKAGE_DIR, 'cordis.patch.yml'),
     ].filter(Boolean)
     const file = candidates.find((candidate) => fs.existsSync(candidate))
     if (!file) return false
-    const lines = fs.readFileSync(file, 'utf8').split('\n')
-    const startIndex = lines.findIndex((line) => /^\s*- id: agent-sync\s*$/.test(line))
-    if (startIndex < 0) return false
-    const rowIndent = (lines[startIndex].match(/^\s*/) || [''])[0]
-    const keyIndent = rowIndent + '  '
-    let endIndex = lines.length
-    for (let i = startIndex + 1; i < lines.length; i += 1) {
-      const line = lines[i]
-      if (line.trim() === '') continue
-      const indent = (line.match(/^\s*/) || [''])[0]
-      if (indent.length <= rowIndent.length) {
-        endIndex = i
-        break
-      }
+
+    backupOnce(file)
+    const current = fs.readFileSync(file, 'utf8')
+    const body = stripManagedSection(current)
+    const section = renderManagedConfig(next)
+    const merged = (body ? body + '\n\n' : '') + section + '\n'
+
+    if (!looksLikePatchList(merged)) {
+      throw new Error('refusing to write: result is not a patch entry list')
     }
-    const block = lines.slice(startIndex, endIndex)
-    const editable = ["pollMs","sealAfterMs","scanEveryMs","maxSessionsPerApp","maxFilesPerApp","orphanAfterMinutes","backupKeep","sweepMissing","backupOnStart","workspacesRoot"]
-    const valueOf = (key) => {
-      const raw = next[key]
-      if (typeof raw === 'string') return JSON.stringify(raw)
-      if (typeof raw === 'boolean' || typeof raw === 'number') return String(raw)
-      return JSON.stringify(raw === undefined || raw === null ? '' : raw)
-    }
-    const configIndex = block.findIndex((line) => /^\s+config:\s*$/.test(line))
-    let nextBlock
-    if (configIndex < 0) {
-      nextBlock = [...block, keyIndent + 'config:', ...editable.map((key) => keyIndent + '  ' + key + ': ' + valueOf(key))]
-    } else {
-      const configIndent = (block[configIndex].match(/^\s*/) || [''])[0]
-      const childIndent = configIndent + '  '
-      let configEnd = block.length
-      for (let i = configIndex + 1; i < block.length; i += 1) {
-        const line = block[i]
-        if (line.trim() === '') continue
-        const indent = (line.match(/^\s*/) || [''])[0]
-        if (indent.length <= configIndent.length) {
-          configEnd = i
-          break
-        }
-      }
-      const children = block.slice(configIndex + 1, configEnd)
-      const keyPattern = new RegExp('^\\s+([A-Za-z0-9_]+):')
-      const present = new Set()
-      const patched = children.map((line) => {
-        const match = line.match(keyPattern)
-        if (!match) return line
-        present.add(match[1])
-        if (!editable.includes(match[1])) return line
-        return childIndent + match[1] + ': ' + valueOf(match[1])
-      })
-      const appended = editable.filter((key) => !present.has(key)).map((key) => childIndent + key + ': ' + valueOf(key))
-      nextBlock = [...block.slice(0, configIndex + 1), ...patched, ...appended, ...block.slice(configEnd)]
-    }
-    const merged = [...lines.slice(0, startIndex), ...nextBlock, ...lines.slice(endIndex)]
-    fs.writeFileSync(file, merged.join('\n'), 'utf8')
+    atomicWrite(file, merged)
     return true
   }
 

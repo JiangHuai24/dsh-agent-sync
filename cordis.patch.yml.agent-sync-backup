@@ -1,0 +1,18 @@
+- insert:
+    - id: agent-sync
+      name: '@local/agent-sync'
+      config:
+        pollMs: 3000
+        sealAfterMs: 12000
+        # 0 = import every session found in each application's store
+        maxSessionsPerApp: 0
+        maxFilesPerApp: 4000
+        # Empty = <parent of the first workspace>/agent-sync-workspaces
+        workspacesRoot: ''
+        sources:
+          workbuddy:
+            enabled: true
+          zcode:
+            enabled: true
+          codex:
+            enabled: true

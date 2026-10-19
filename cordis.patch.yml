@@ -16,3 +16,18 @@
             enabled: true
           codex:
             enabled: true
+
+# --- agent-sync managed (config; edit via the settings page) ---
+- id: agent-sync
+  name: '@local/agent-sync'
+  config:
+    pollMs: 3000
+    sealAfterMs: 12000
+    scanEveryMs: 5000
+    maxSessionsPerApp: 0
+    orphanAfterMinutes: 60
+    backupKeep: 10
+    sweepMissing: false
+    backupOnStart: true
+    workspacesRoot: ""
+# --- end agent-sync managed ---
