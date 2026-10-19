@@ -15,9 +15,7 @@ window.__ModuleLoader__.load({
       content: zh ? '匹配消息' : 'Message match',
       title: zh ? '标题匹配' : 'Title match',
       settingsTitle: zh ? '外部会话同步' : 'Agent Session Sync',
-      settingsHint: zh
-        ? '其他 AI 助手的会话会实时镜像成任务，每个应用一个工作区；具体配置在 cordis.patch.yml 的 agent-sync 行。'
-        : 'Sessions from other coding agents are mirrored as tasks, one workspace per application. Configuration lives in the agent-sync row of cordis.patch.yml.',
+      settingsHint: zh ? '其他 AI 助手的会话会实时镜像成任务，每个应用一个工作区。' : 'Sessions from other coding agents are mirrored as tasks, one workspace per app.',
       mirrored: zh ? '镜像任务' : 'Mirrored',
       appsLabel: zh ? '应用' : 'Apps',
       errorsLabel: zh ? '错误' : 'Errors',
@@ -160,18 +158,19 @@ window.__ModuleLoader__.load({
           style: {
             display: 'inline-flex',
             alignItems: 'center',
-            gap: 6,
+            justifyContent: 'center',
+            width: 28,
+            height: 28,
+            padding: 0,
             background: open ? colors.hover : 'transparent',
             border: 'none',
+            borderRadius: 6,
             cursor: 'pointer',
             color: open ? colors.primary : colors.secondary,
-            padding: wide ? '4px 8px' : '4px',
-            borderRadius: 6,
             font: 'inherit',
           },
         },
-        h(Icon, { path: ['M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14Z', 'M20 20l-4.2-4.2'] }),
-        wide ? h('span', null, text.search) : null,
+        h(Icon, { path: ['M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14Z', 'M20 20l-4.2-4.2'], size: 17 }),
       )
     }
 
@@ -485,7 +484,7 @@ window.__ModuleLoader__.load({
               borderBottom: '1px solid ' + colors.borderSoft,
             },
           },
-          h('span', { style: { width: 120, flex: 'none', fontSize: 12, color: colors.secondary } }, label),
+          h('span', { style: { width: 88, flex: 'none', fontSize: 12, color: colors.secondary } }, label),
           h('span', { style: { fontSize: 13, color: colors.primary, wordBreak: 'break-all' } }, value),
         )
 
@@ -517,7 +516,7 @@ window.__ModuleLoader__.load({
                       borderBottom: '1px solid ' + colors.borderSoft,
                     },
                   },
-                  h('span', { style: { width: 120, flex: 'none', fontSize: 13, color: colors.primary } }, app.name),
+                  h('span', { style: { width: 88, flex: 'none', fontSize: 13, color: colors.primary } }, app.name),
                   h(
                     'span',
                     { style: { fontSize: 12, color: colors.secondary } },
@@ -608,19 +607,20 @@ window.__ModuleLoader__.load({
           style: {
             display: 'inline-flex',
             alignItems: 'center',
-            gap: 6,
+            justifyContent: 'center',
+            width: 28,
+            height: 28,
+            padding: 0,
             background: 'transparent',
             border: 'none',
+            borderRadius: 6,
             cursor: busy ? 'progress' : 'pointer',
             color: colors.secondary,
-            padding: wide ? '4px 8px' : '4px',
-            borderRadius: 6,
             font: 'inherit',
             opacity: busy ? 0.6 : 1,
           },
         },
-        h(Icon, { path: ['M21 12a9 9 0 1 1-2.64-6.36', 'M21 3v6h-6'] }),
-        wide ? h('span', null, text.refresh) : null,
+        h(Icon, { path: ['M21 12a9 9 0 1 1-2.64-6.36', 'M21 3v6h-6'], size: 17 }),
       )
     }
 
