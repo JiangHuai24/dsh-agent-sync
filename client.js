@@ -21,6 +21,10 @@ window.__ModuleLoader__.load({
       mirrored: zh ? '镜像任务' : 'Mirrored',
       appsLabel: zh ? '应用' : 'Apps',
       errorsLabel: zh ? '错误' : 'Errors',
+      orphanedLabel: zh ? '来源已消失（已保留）' : 'Source gone (kept)',
+      backup: zh ? '备份镜像' : 'Back up mirrors',
+      backing: zh ? '备份中…' : 'Backing up…',
+      backupDone: zh ? '备份完成' : 'Backup complete',
       reload: zh ? '刷新数据' : 'Reload',
       workspaceRoot: zh ? '工作区根目录' : 'Workspaces root',
       scanned: zh ? '扫描' : 'scanned',
@@ -452,6 +456,8 @@ window.__ModuleLoader__.load({
     function SettingsSection() {
       const [status, setStatus] = React.useState(null)
       const [error, setError] = React.useState('')
+      const [backup, setBackup] = React.useState('')
+      const [backing, setBacking] = React.useState(false)
       const load = React.useCallback(() => {
         fetch('/agent-sync/status', { cache: 'no-store' })
           .then((response) => (response.ok ? response.json() : null))
@@ -491,6 +497,7 @@ window.__ModuleLoader__.load({
         row(text.mirrored, String((status && status.mirrored) || 0)),
         row(text.appsLabel, String(apps.length)),
         row(text.errorsLabel, String((status && status.errors) || 0)),
+        row(text.orphanedLabel, String((status && status.orphaned) || 0)),
         row(text.workspaceRoot, (status && status.workspacesRoot) || '—'),
         apps.length > 0
           ? h(
@@ -522,24 +529,63 @@ window.__ModuleLoader__.load({
           : null,
         error ? h('div', { style: { marginTop: 12, fontSize: 12, color: 'var(--dsw-alias-state-error-primary)' } }, error) : null,
         h(
-          'button',
-          {
-            type: 'button',
-            onClick: load,
-            style: {
-              marginTop: 18,
-              padding: '6px 12px',
-              borderRadius: 6,
-              border: '1px solid ' + colors.border,
-              background: 'transparent',
-              color: colors.primary,
-              cursor: 'pointer',
-              font: 'inherit',
-              fontSize: 12,
+          'div',
+          { style: { display: 'flex', gap: 10, marginTop: 18 } },
+          h(
+            'button',
+            {
+              type: 'button',
+              onClick: () => {
+                setBacking(true)
+                setBackup('')
+                fetch('/agent-sync/backup', { method: 'POST' })
+                  .then((response) => (response.ok ? response.json() : null))
+                  .then((payload) => {
+                    if (payload && payload.ok) {
+                      setBackup(text.backupDone + ' · ' + payload.dir + ' · ' + payload.copied + ' mirrors')
+                    } else {
+                      setBackup((payload && payload.error) || 'backup failed')
+                    }
+                  })
+                  .catch((failure) => setBackup(String(failure && failure.message)))
+                  .finally(() => setBacking(false))
+              },
+              style: {
+                padding: '6px 12px',
+                borderRadius: 6,
+                border: '1px solid ' + colors.border,
+                background: 'transparent',
+                color: colors.primary,
+                cursor: backing ? 'progress' : 'pointer',
+                font: 'inherit',
+                fontSize: 12,
+                opacity: backing ? 0.6 : 1,
+              },
             },
-          },
-          text.reload,
+            backing ? text.backing : text.backup,
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              onClick: load,
+              style: {
+                padding: '6px 12px',
+                borderRadius: 6,
+                border: '1px solid ' + colors.border,
+                background: 'transparent',
+                color: colors.primary,
+                cursor: 'pointer',
+                font: 'inherit',
+                fontSize: 12,
+              },
+            },
+            text.reload,
+          ),
         ),
+        backup
+          ? h('div', { style: { marginTop: 10, fontSize: 11, color: colors.secondary, wordBreak: 'break-all' } }, backup)
+          : null,
       )
     }
 

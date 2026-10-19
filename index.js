@@ -135,6 +135,16 @@ export function resolveConfig(config) {
     scanEveryMs: clamp(num(raw.scanEveryMs, 5000), 1000, 300000),
     /** Minutes a source may stay absent before its mirror is archived. */
     missingGraceMinutes: clamp(num(raw.missingGraceMinutes, 30), 1, 10080),
+    /** Archive mirrors whose source disappeared. Off by default: a deleted host
+     *  application must not take its mirrored history down with it. */
+    sweepMissing: raw.sweepMissing === true,
+    /** Minutes before a source-less mirror is flagged as orphaned (kept alive). */
+    orphanAfterMinutes: clamp(num(raw.orphanAfterMinutes, 60), 1, 10080),
+    /** Snapshot the mirror bookkeeping on activation. */
+    backupOnStart: raw.backupOnStart !== false,
+    backupKeep: clamp(num(raw.backupKeep, 10), 1, 100),
+    /** Manual/automatic backup folder; empty = next to the state file. */
+    backupsRoot: typeof raw.backupsRoot === 'string' && raw.backupsRoot ? raw.backupsRoot : undefined,
     workspacesRoot: typeof raw.workspacesRoot === 'string' && raw.workspacesRoot ? raw.workspacesRoot : undefined,
     /** Override where the mirror bookkeeping lives (tests, portable installs). */
     stateFile: typeof raw.stateFile === 'string' && raw.stateFile ? raw.stateFile : undefined,
@@ -825,6 +835,71 @@ export function apply(ctx, config) {
     return items
   }
 
+  const backupsDir = () =>
+    cfg.backupsRoot || path.join(path.dirname(storeFile(cfg)), 'backups')
+
+  const backupState = () => {
+    const file = storeFile(cfg)
+    if (!fs.existsSync(file)) return null
+    const dir = backupsDir()
+    fs.mkdirSync(dir, { recursive: true })
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const target = path.join(dir, 'state-' + stamp + '.json')
+    fs.copyFileSync(file, target)
+    try {
+      const kept = fs
+        .readdirSync(dir)
+        .filter((name) => name.startsWith('state-') && name.endsWith('.json'))
+        .sort()
+      while (kept.length > cfg.backupKeep) {
+        const oldest = kept.shift()
+        fs.rmSync(path.join(dir, oldest), { force: true })
+      }
+    } catch {
+      // pruning is best-effort
+    }
+    return target
+  }
+
+  const backupMirrors = () => {
+    const dir = path.join(backupsDir(), 'mirrors-' + new Date().toISOString().replace(/[:.]/g, '-'))
+    fs.mkdirSync(dir, { recursive: true })
+    const sessionsRoot = path.join(process.env.DSH_HOME || path.join(home, '.dsh'), 'sessions')
+    let copied = 0
+    for (const record of store.sources.values()) {
+      if (!record || !record.mirrorId) continue
+      let source = null
+      try {
+        for (const group of fs.readdirSync(sessionsRoot)) {
+          const candidate = path.join(sessionsRoot, group, record.mirrorId)
+          if (fs.existsSync(candidate)) {
+            source = candidate
+            break
+          }
+        }
+      } catch {
+        source = null
+      }
+      if (!source) continue
+      try {
+        fs.cpSync(source, path.join(dir, record.mirrorId), { recursive: true })
+        copied += 1
+      } catch {
+        // a single unreadable session must not abort the backup
+      }
+    }
+    return { dir, copied }
+  }
+
+  if (cfg.backupOnStart) {
+    try {
+      const target = backupState()
+      if (target) log('state backup written', target)
+    } catch (error) {
+      log('state backup failed', String(error && error.message))
+    }
+  }
+
   const webServer = typeof ctx.get === 'function' ? ctx.get('webServer') : ctx.webServer
   if (webServer) {
     ctx.effect(() =>
@@ -852,6 +927,7 @@ export function apply(ctx, config) {
             workspacesRoot: report.workspacesRoot || workspacesRoot || null,
             mirrored: report.sources.filter((item) => item.emittedTurns > 0).length,
             errors: report.sources.filter((item) => item.error).length,
+            orphaned: report.sources.filter((item) => item.orphaned).length,
             apps: report.apps.map((app) => ({
               id: app.id,
               name: app.name,
@@ -865,6 +941,27 @@ export function apply(ctx, config) {
             'cache-control': 'no-store',
           })
           res.end(payload)
+        },
+      }),
+    )
+    ctx.effect(() =>
+      webServer.register({
+        kind: 'exact',
+        path: '/agent-sync/backup',
+        handler: async (req, res) => {
+          if (req.method !== 'POST') {
+            res.writeHead(405).end('method not allowed')
+            return
+          }
+          try {
+            const state = backupState()
+            const mirrors = backupMirrors()
+            res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+            res.end(JSON.stringify({ ok: true, state, ...mirrors }))
+          } catch (error) {
+            res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+            res.end(JSON.stringify({ ok: false, error: String(error && error.message) }))
+          }
         },
       }),
     )
@@ -915,28 +1012,41 @@ export function apply(ctx, config) {
   const sweepMissingSources = async (seen) => {
     if (cfg.maxSessionsPerApp > 0) return
     const now = Date.now()
-    const grace = cfg.missingGraceMinutes * 60000
+    const orphanAfter = cfg.orphanAfterMinutes * 60000
+    const archiveAfter = cfg.missingGraceMinutes * 60000
     for (const [key, record] of store.sources) {
       if (seen.has(key)) {
         if (record.missingSince !== undefined) {
           delete record.missingSince
           dirty = true
         }
+        if (record.orphaned) {
+          delete record.orphaned
+          dirty = true
+        }
         continue
       }
-      const action = missingAction(record, now, grace)
-      if (action === 'skip' || action === 'wait') continue
-      if (action === 'mark') {
+      if (record.archived) continue
+      if (record.missingSince === undefined) {
         record.missingSince = now
         dirty = true
         continue
       }
+      const age = now - record.missingSince
+      if (!record.orphaned && age >= orphanAfter) {
+        record.orphaned = true
+        dirty = true
+        log('source missing but mirror kept (orphaned)', key)
+      }
+      // Mirrored logs live under DSH_HOME and outlive the source application;
+      // archiving them is opt-in only.
+      if (!cfg.sweepMissing || age < archiveAfter) continue
       try {
         if (record.emittedTurns > 0) await registry.archiveSession(record.mirrorId)
         record.archived = true
         record.missingReason = 'source-gone'
         dirty = true
-        log('archived mirror whose source disappeared', key)
+        log('archived mirror whose source disappeared (sweepMissing)', key)
       } catch (error) {
         log('archive missing source failed', key, String(error && error.message))
       }
@@ -1261,6 +1371,7 @@ export function apply(ctx, config) {
             mirrorId: record ? record.mirrorId : null,
             detached: record ? record.detached === true : false,
             archived: record ? record.archived === true : false,
+            orphaned: record ? record.orphaned === true : false,
             error: record ? record.lastError || null : null,
           })
           try {
