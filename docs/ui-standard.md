@@ -85,6 +85,28 @@ h('button', { style: footerButtonStyle(open, colors) },
 
 描边统一 `strokeWidth: 2`，`strokeLinecap/Linejoin: round`，SVG 设 `display: block` 以脱离文本基线。
 
+## 设置页表单与向导
+
+设置页不是只读状态面板，必须能改配置并落盘。参照 `meow-memory` 的做法：
+
+| 部件 | 规格 |
+| --- | --- |
+| 分组标题 | 12px / 600 / secondary，上间距 20px |
+| 字段行 | 左侧标签 200px + 右侧控件，底部 1px 分隔，上下 10px |
+| 开关 | 34×18 圆角胶囊，滑块 14px |
+| 数字输入 | 宽 96px，右对齐，可带单位后缀 |
+| 保存栏 | 主按钮 28px 高，未改动时禁用；旁边「还原」 |
+
+### 设置向导（防呆）
+
+参考 `gh auth login` 与 `create-vite` 的分步模式：
+
+- **一次只问一个决定**，不要把所有字段堆在一屏；
+- 顶部进度条显示 `当前/总数`；
+- 每步可给 `canAdvance` 校验，不满足就禁用「下一步」；
+- 最后一步必须有**只读核对区**（脚本路径、仓库、凭据来源），让用户确认再落盘；
+- 首次进入自动展开，完成后用 `localStorage` 记录，并提供「重新运行设置向导」入口。
+
 ## 可读性要求
 
 - **纯图标必须**同时给 `title`（tooltip）和 `aria-label`；

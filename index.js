@@ -23,6 +23,10 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
+import { fileURLToPath } from 'node:url'
+
+/** Directory of this package; the bundle patch lives beside it. */
+const PACKAGE_DIR = path.dirname(fileURLToPath(import.meta.url))
 
 /** The session log format the installed Harness writes. */
 const FORMAT_VERSION = 4
@@ -820,6 +824,103 @@ export function apply(ctx, config) {
   const persistence = ctx.sessionPersistence
   const registry = ctx.workspaceRegistry
 
+  /**
+   * Merge the editable keys into this plugin's row in the profile patch. The
+   * file is small YAML, so the row is rewritten in place instead of pulling in
+   * a YAML dependency.
+   */
+  /**
+   * Merge only the editable keys into this plugin's own bundle patch. Every
+   * other key (sources, comments, unknown options) is preserved verbatim, so a
+   * save from the settings page never drops configuration it does not know.
+   */
+  const writeProfileConfig = (next) => {
+    const candidates = [
+      path.join(PACKAGE_DIR, 'cordis.patch.yml'),
+      process.env.DSH_PROFILE_DIR ? path.join(process.env.DSH_PROFILE_DIR, 'cordis.patch.yml') : undefined,
+    ].filter(Boolean)
+    const file = candidates.find((candidate) => fs.existsSync(candidate))
+    if (!file) return false
+    const lines = fs.readFileSync(file, 'utf8').split('\n')
+    const startIndex = lines.findIndex((line) => /^\s*- id: agent-sync\s*$/.test(line))
+    if (startIndex < 0) return false
+    const rowIndent = (lines[startIndex].match(/^\s*/) || [''])[0]
+    const keyIndent = rowIndent + '  '
+    let endIndex = lines.length
+    for (let i = startIndex + 1; i < lines.length; i += 1) {
+      const line = lines[i]
+      if (line.trim() === '') continue
+      const indent = (line.match(/^\s*/) || [''])[0]
+      if (indent.length <= rowIndent.length) {
+        endIndex = i
+        break
+      }
+    }
+    const block = lines.slice(startIndex, endIndex)
+    const editable = ["pollMs","sealAfterMs","scanEveryMs","maxSessionsPerApp","maxFilesPerApp","orphanAfterMinutes","backupKeep","sweepMissing","backupOnStart","workspacesRoot"]
+    const valueOf = (key) => {
+      const raw = next[key]
+      if (typeof raw === 'string') return JSON.stringify(raw)
+      if (typeof raw === 'boolean' || typeof raw === 'number') return String(raw)
+      return JSON.stringify(raw === undefined || raw === null ? '' : raw)
+    }
+    const configIndex = block.findIndex((line) => /^\s+config:\s*$/.test(line))
+    let nextBlock
+    if (configIndex < 0) {
+      nextBlock = [...block, keyIndent + 'config:', ...editable.map((key) => keyIndent + '  ' + key + ': ' + valueOf(key))]
+    } else {
+      const configIndent = (block[configIndex].match(/^\s*/) || [''])[0]
+      const childIndent = configIndent + '  '
+      let configEnd = block.length
+      for (let i = configIndex + 1; i < block.length; i += 1) {
+        const line = block[i]
+        if (line.trim() === '') continue
+        const indent = (line.match(/^\s*/) || [''])[0]
+        if (indent.length <= configIndent.length) {
+          configEnd = i
+          break
+        }
+      }
+      const children = block.slice(configIndex + 1, configEnd)
+      const keyPattern = new RegExp('^\\s+([A-Za-z0-9_]+):')
+      const present = new Set()
+      const patched = children.map((line) => {
+        const match = line.match(keyPattern)
+        if (!match) return line
+        present.add(match[1])
+        if (!editable.includes(match[1])) return line
+        return childIndent + match[1] + ': ' + valueOf(match[1])
+      })
+      const appended = editable.filter((key) => !present.has(key)).map((key) => childIndent + key + ': ' + valueOf(key))
+      nextBlock = [...block.slice(0, configIndex + 1), ...patched, ...appended, ...block.slice(configEnd)]
+    }
+    const merged = [...lines.slice(0, startIndex), ...nextBlock, ...lines.slice(endIndex)]
+    fs.writeFileSync(file, merged.join('\n'), 'utf8')
+    return true
+  }
+
+  const readJsonBody = (req) =>
+    new Promise((resolve) => {
+      let data = ''
+      req.on('data', (chunk) => {
+        data += chunk
+        if (data.length > 200000) req.destroy()
+      })
+      req.on('end', () => {
+        try {
+          resolve(JSON.parse(data || '{}'))
+        } catch {
+          resolve({})
+        }
+      })
+      req.on('error', () => resolve({}))
+    })
+
+  const sendJson = (res, payload) => {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    res.end(JSON.stringify(payload))
+  }
+
   const store = loadStore(cfg)
   const adapters = buildAdapters(cfg)
 
@@ -913,6 +1014,68 @@ export function apply(ctx, config) {
             'cache-control': 'no-store',
           })
           res.end(payload)
+        },
+      }),
+    )
+    ctx.effect(() =>
+      webServer.register({
+        kind: 'exact',
+        path: '/agent-sync/config',
+        handler: async (req, res) => {
+          if (req.method !== 'POST') {
+            sendJson(res, {
+              pollMs: cfg.pollMs,
+              sealAfterMs: cfg.sealAfterMs,
+              maxSessionsPerApp: cfg.maxSessionsPerApp,
+              maxFilesPerApp: cfg.maxFilesPerApp,
+              scanEveryMs: cfg.scanEveryMs,
+              missingGraceMinutes: cfg.missingGraceMinutes,
+              orphanAfterMinutes: cfg.orphanAfterMinutes,
+              sweepMissing: cfg.sweepMissing,
+              backupOnStart: cfg.backupOnStart,
+              backupKeep: cfg.backupKeep,
+              workspacesRoot: cfg.workspacesRoot || null,
+              onlyApps: cfg.onlyApps,
+            })
+            return
+          }
+          const body = await readJsonBody(req)
+          const num = (value, min, max, fallback) => {
+            const n = Number(value)
+            if (!Number.isFinite(n)) return fallback
+            return Math.min(max, Math.max(min, Math.round(n)))
+          }
+          const next = {
+            pollMs: num(body.pollMs, 500, 120000, cfg.pollMs),
+            sealAfterMs: num(body.sealAfterMs, 1000, 900000, cfg.sealAfterMs),
+            scanEveryMs: num(body.scanEveryMs, 1000, 300000, cfg.scanEveryMs),
+            maxSessionsPerApp: num(body.maxSessionsPerApp, 0, 5000, cfg.maxSessionsPerApp),
+            orphanAfterMinutes: num(body.orphanAfterMinutes, 1, 10080, cfg.orphanAfterMinutes),
+            backupKeep: num(body.backupKeep, 1, 100, cfg.backupKeep),
+            sweepMissing: body.sweepMissing === true,
+            backupOnStart: body.backupOnStart !== false,
+            workspacesRoot: typeof body.workspacesRoot === 'string' ? body.workspacesRoot : cfg.workspacesRoot || '',
+          }
+          try {
+            const written = writeProfileConfig(next)
+            // Values that only affect future ticks can be adopted immediately.
+            cfg.pollMs = next.pollMs
+            cfg.sealAfterMs = next.sealAfterMs
+            cfg.scanEveryMs = next.scanEveryMs
+            cfg.maxSessionsPerApp = next.maxSessionsPerApp
+            cfg.orphanAfterMinutes = next.orphanAfterMinutes
+            cfg.backupKeep = next.backupKeep
+            cfg.sweepMissing = next.sweepMissing
+            cfg.backupOnStart = next.backupOnStart
+            if (next.workspacesRoot) cfg.workspacesRoot = next.workspacesRoot
+            sendJson(res, {
+              ok: true,
+              config: { ...next, workspacesRoot: cfg.workspacesRoot || null },
+              note: written ? '已保存到 profile 配置' : '已生效（未能写入配置文件）',
+            })
+          } catch (error) {
+            sendJson(res, { ok: false, error: String(error && error.message) })
+          }
         },
       }),
     )

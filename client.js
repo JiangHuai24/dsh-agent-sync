@@ -474,81 +474,169 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function SettingsSection() {
+function SettingsSection() {
       const [status, setStatus] = React.useState(null)
-      const [error, setError] = React.useState('')
+      const [config, setConfig] = React.useState(null)
+      const [draft, setDraft] = React.useState(null)
+      const [saving, setSaving] = React.useState(false)
+      const [note, setNote] = React.useState('')
       const [backup, setBackup] = React.useState('')
       const [backing, setBacking] = React.useState(false)
-      const load = React.useCallback(() => {
+
+      const loadStatus = React.useCallback(() => {
         fetch('/agent-sync/status', { cache: 'no-store' })
-          .then((response) => (response.ok ? response.json() : null))
+          .then((r) => (r.ok ? r.json() : null))
+          .then((payload) => payload && setStatus(payload))
+          .catch(() => {})
+      }, [])
+
+      const loadConfig = React.useCallback(() => {
+        fetch('/agent-sync/config', { cache: 'no-store' })
+          .then((r) => (r.ok ? r.json() : null))
           .then((payload) => {
             if (!payload) return
-            setStatus(payload)
-            setError('')
+            setConfig(payload)
+            setDraft(payload)
           })
-          .catch((failure) => setError(String(failure && failure.message)))
+          .catch(() => {})
       }, [])
+
       React.useEffect(() => {
-        load()
-      }, [load])
+        loadStatus()
+        loadConfig()
+      }, [loadStatus, loadConfig])
+
+      const dirty = Boolean(draft && config && JSON.stringify(draft) !== JSON.stringify(config))
+      const set = (key) => (value) => setDraft((current) => ({ ...current, [key]: value }))
+
+      const save = () => {
+        setSaving(true)
+        setNote('')
+        fetch('/agent-sync/config', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(draft),
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((payload) => {
+            if (payload && payload.ok) {
+              setConfig(payload.config)
+              setDraft(payload.config)
+              setNote(payload.note || '已保存，立即生效')
+            } else {
+              setNote((payload && payload.error) || '保存失败')
+            }
+          })
+          .catch((error) => setNote(String(error && error.message)))
+          .finally(() => setSaving(false))
+      }
 
       const apps = (status && status.apps) || []
-      const row = (label, value) =>
-        h(
-          'div',
-          {
-            style: {
-              display: 'flex',
-              alignItems: 'baseline',
-              gap: 12,
-              padding: '8px 0',
-              borderBottom: '1px solid ' + colors.borderSoft,
-            },
-          },
-          h('span', { style: { width: 88, flex: 'none', fontSize: 12, color: colors.secondary } }, label),
-          h('span', { style: { fontSize: 13, color: colors.primary, wordBreak: 'break-all' } }, value),
-        )
+      if (!draft) {
+        return h('div', { style: { padding: '12px 2px', fontSize: 12, color: colors.tertiary } }, '加载中…')
+      }
 
       return h(
         'div',
-        { style: { padding: '4px 2px', maxWidth: 720 } },
-        h('h2', { style: { margin: '0 0 6px', fontSize: 16, color: colors.primary } }, text.settingsTitle),
-        h('p', { style: { margin: '0 0 16px', fontSize: 12, color: colors.secondary, lineHeight: 1.6 } }, text.settingsHint),
-        row(text.mirrored, String((status && status.mirrored) || 0)),
-        row(text.appsLabel, String(apps.length)),
-        row(text.errorsLabel, String((status && status.errors) || 0)),
-        row(text.orphanedLabel, String((status && status.orphaned) || 0)),
-        row(text.workspaceRoot, (status && status.workspacesRoot) || '—'),
-        apps.length > 0
-          ? h(
+        { style: { padding: '4px 2px', maxWidth: 760 } },
+        h('h2', { style: { margin: '0 0 4px', fontSize: 16, color: colors.primary } }, text.settingsTitle),
+        h('p', { style: { margin: '0 0 4px', fontSize: 12, color: colors.secondary } }, text.settingsHint),
+        h(
+          'div',
+          { style: { display: 'flex', gap: 18, fontSize: 12, color: colors.secondary, margin: '10px 0 2px' } },
+          h('span', null, text.mirrored + ' ' + ((status && status.mirrored) || 0)),
+          h('span', null, text.appsLabel + ' ' + apps.length),
+          h('span', null, text.errorsLabel + ' ' + ((status && status.errors) || 0)),
+          h('span', null, text.orphanedLabel + ' ' + ((status && status.orphaned) || 0)),
+        ),
+
+        h(
+          Group,
+          { title: '同步' },
+          h(
+            Field,
+            { label: '轮询间隔', hint: '多久检查一次来源文件（毫秒）' },
+            h(NumberField, { value: draft.pollMs, min: 500, max: 120000, onChange: set('pollMs'), suffix: 'ms' }),
+          ),
+          h(
+            Field,
+            { label: '封口时间', hint: '会话静默多久算这一轮结束（毫秒）' },
+            h(NumberField, { value: draft.sealAfterMs, min: 1000, max: 900000, onChange: set('sealAfterMs'), suffix: 'ms' }),
+          ),
+          h(
+            Field,
+            { label: '扫描间隔', hint: '重新扫描文件列表的间隔（毫秒）' },
+            h(NumberField, { value: draft.scanEveryMs, min: 1000, max: 300000, onChange: set('scanEveryMs'), suffix: 'ms' }),
+          ),
+          h(
+            Field,
+            { label: '每应用上限', hint: '0 = 全量导入' },
+            h(NumberField, { value: draft.maxSessionsPerApp, min: 0, max: 5000, onChange: set('maxSessionsPerApp') }),
+          ),
+        ),
+
+        h(
+          Group,
+          { title: '保护' },
+          h(
+            Field,
+            { label: '来源消失后归档', hint: '关闭时镜像永久保留（推荐）' },
+            h(Toggle, { value: draft.sweepMissing, onChange: set('sweepMissing') }),
+          ),
+          h(
+            Field,
+            { label: '标记为孤儿', hint: '来源消失多久后标记（分钟）' },
+            h(NumberField, { value: draft.orphanAfterMinutes, min: 1, max: 10080, onChange: set('orphanAfterMinutes'), suffix: '分钟' }),
+          ),
+          h(
+            Field,
+            { label: '启动时快照', hint: '每次激活备份 state.json' },
+            h(Toggle, { value: draft.backupOnStart, onChange: set('backupOnStart') }),
+          ),
+          h(
+            Field,
+            { label: '快照保留数' },
+            h(NumberField, { value: draft.backupKeep, min: 1, max: 100, onChange: set('backupKeep'), suffix: '份' }),
+          ),
+        ),
+
+        h(
+          Group,
+          { title: '位置' },
+          h(
+            Field,
+            { label: '工作区根目录', hint: '留空 = 默认工作区父目录下 agent-sync-workspaces' },
+            h(TextField, { value: draft.workspacesRoot || '', onChange: set('workspacesRoot'), placeholder: '默认' }),
+          ),
+        ),
+
+        h(SaveBar, { dirty, saving, onSave: save, onReset: () => setDraft(config), note }),
+
+        h(
+          Group,
+          { title: text.appsLabel },
+          ...apps.map((app) =>
+            h(
               'div',
-              { style: { marginTop: 18 } },
-              h('div', { style: { fontSize: 12, color: colors.secondary, marginBottom: 8 } }, text.appsLabel),
-              ...apps.map((app) =>
-                h(
-                  'div',
-                  {
-                    key: app.id,
-                    style: {
-                      display: 'flex',
-                      alignItems: 'baseline',
-                      gap: 12,
-                      padding: '6px 0',
-                      borderBottom: '1px solid ' + colors.borderSoft,
-                    },
-                  },
-                  h('span', { style: { width: 88, flex: 'none', fontSize: 13, color: colors.primary } }, app.name),
-                  h(
-                    'span',
-                    { style: { fontSize: 12, color: colors.secondary } },
-                    text.scanned + ' ' + app.scanned + (app.workspace ? ' · ' + app.workspace.path : '') + (app.error ? ' · ' + app.error : ''),
-                  ),
-                ),
-              ),
-            )
-          : null,
-        error ? h('div', { style: { marginTop: 12, fontSize: 12, color: 'var(--dsw-alias-state-error-primary)' } }, error) : null,
+              {
+                key: app.id,
+                style: {
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  gap: 12,
+                  padding: '6px 0',
+                  borderBottom: '1px solid ' + colors.borderSoft,
+                  fontSize: 12,
+                },
+              },
+              h('span', { style: { width: 120, flex: 'none', color: colors.primary } }, app.name),
+              h('span', { style: { color: colors.secondary } }, text.scanned + ' ' + app.scanned),
+              h('span', { style: { flex: 1 } }),
+              h('span', { style: { color: colors.tertiary, fontSize: 11 } }, app.workspace ? app.workspace.title : '—'),
+            ),
+          ),
+        ),
+
         h(
           'div',
           { style: { display: 'flex', gap: 10, marginTop: 18 } },
@@ -560,19 +648,17 @@ window.__ModuleLoader__.load({
                 setBacking(true)
                 setBackup('')
                 fetch('/agent-sync/backup', { method: 'POST' })
-                  .then((response) => (response.ok ? response.json() : null))
+                  .then((r) => (r.ok ? r.json() : null))
                   .then((payload) => {
-                    if (payload && payload.ok) {
-                      setBackup(text.backupDone + ' · ' + payload.dir + ' · ' + payload.copied + ' mirrors')
-                    } else {
-                      setBackup((payload && payload.error) || 'backup failed')
-                    }
+                    if (payload && payload.ok) setBackup(text.backupDone + ' · ' + payload.copied + ' 个会话')
+                    else setBackup((payload && payload.error) || '备份失败')
                   })
-                  .catch((failure) => setBackup(String(failure && failure.message)))
+                  .catch((error) => setBackup(String(error && error.message)))
                   .finally(() => setBacking(false))
               },
               style: {
-                padding: '6px 12px',
+                height: 28,
+                padding: '0 12px',
                 borderRadius: 6,
                 border: '1px solid ' + colors.border,
                 background: 'transparent',
@@ -580,7 +666,6 @@ window.__ModuleLoader__.load({
                 cursor: backing ? 'progress' : 'pointer',
                 font: 'inherit',
                 fontSize: 12,
-                opacity: backing ? 0.6 : 1,
               },
             },
             backing ? text.backing : text.backup,
@@ -589,9 +674,13 @@ window.__ModuleLoader__.load({
             'button',
             {
               type: 'button',
-              onClick: load,
+              onClick: () => {
+                loadStatus()
+                loadConfig()
+              },
               style: {
-                padding: '6px 12px',
+                height: 28,
+                padding: '0 12px',
                 borderRadius: 6,
                 border: '1px solid ' + colors.border,
                 background: 'transparent',
@@ -603,10 +692,8 @@ window.__ModuleLoader__.load({
             },
             text.reload,
           ),
+          backup ? h('span', { style: { fontSize: 11, color: colors.secondary, alignSelf: 'center' } }, backup) : null,
         ),
-        backup
-          ? h('div', { style: { marginTop: 10, fontSize: 11, color: colors.secondary, wordBreak: 'break-all' } }, backup)
-          : null,
       )
     }
 
@@ -676,4 +763,172 @@ window.__ModuleLoader__.load({
       },
     }
   },
-})
+})  /**
+   * Shared settings-form primitives, inlined into each client bundle.
+   * `spec` is the field descriptor list the page renders.
+   */
+
+  const primitives = `
+      // ---- shared settings primitives (docs/ui-standard.md) ----
+      function Field({ label, hint, children }) {
+        return h(
+          'div',
+          {
+            style: {
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 16,
+              padding: '10px 0',
+              borderBottom: '1px solid ' + colors.borderSoft,
+            },
+          },
+          h(
+            'div',
+            { style: { width: 200, flex: 'none' } },
+            h('div', { style: { fontSize: 13, color: colors.primary } }, label),
+            hint ? h('div', { style: { marginTop: 2, fontSize: 11, color: colors.tertiary, lineHeight: 1.5 } }, hint) : null,
+          ),
+          h('div', { style: { flex: 1, minWidth: 0, display: 'flex', justifyContent: 'flex-end' } }, children),
+        )
+      }
+
+      function Group({ title, children }) {
+        return h(
+          'div',
+          { style: { marginTop: 20 } },
+          h('div', { style: { fontSize: 12, fontWeight: 600, color: colors.secondary, marginBottom: 4 } }, title),
+          ...children,
+        )
+      }
+
+      function Toggle({ value, onChange }) {
+        return h(
+          'button',
+          {
+            type: 'button',
+            role: 'switch',
+            'aria-checked': value ? 'true' : 'false',
+            onClick: () => onChange(!value),
+            style: {
+              width: 34,
+              height: 18,
+              flex: 'none',
+              borderRadius: 9,
+              border: 'none',
+              cursor: 'pointer',
+              padding: 0,
+              position: 'relative',
+              background: value ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)',
+              transition: 'background 120ms',
+            },
+          },
+          h('span', {
+            style: {
+              position: 'absolute',
+              top: 2,
+              left: value ? 18 : 2,
+              width: 14,
+              height: 14,
+              borderRadius: '50%',
+              background: '#fff',
+              transition: 'left 120ms',
+            },
+          }),
+        )
+      }
+
+      function NumberField({ value, onChange, min, max, suffix }) {
+        return h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+          h('input', {
+            type: 'number',
+            value: String(value),
+            min,
+            max,
+            onChange: (event) => {
+              const next = Number(event.target.value)
+              if (Number.isFinite(next)) onChange(next)
+            },
+            style: {
+              width: 96,
+              padding: '5px 8px',
+              borderRadius: 6,
+              border: '1px solid ' + colors.border,
+              background: colors.layer,
+              color: colors.primary,
+              font: 'inherit',
+              fontSize: 12,
+            },
+          }),
+          suffix ? h('span', { style: { fontSize: 11, color: colors.tertiary } }, suffix) : null,
+        )
+      }
+
+      function TextField({ value, onChange, placeholder, width }) {
+        return h('input', {
+          value: value || '',
+          placeholder,
+          onChange: (event) => onChange(event.target.value),
+          style: {
+            width: width || 260,
+            padding: '5px 8px',
+            borderRadius: 6,
+            border: '1px solid ' + colors.border,
+            background: colors.layer,
+            color: colors.primary,
+            font: 'inherit',
+            fontSize: 12,
+          },
+        })
+      }
+
+      function SaveBar({ dirty, saving, onSave, onReset, note }) {
+        return h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 18 } },
+          h(
+            'button',
+            {
+              type: 'button',
+              disabled: !dirty || saving,
+              onClick: onSave,
+              style: {
+                height: 28,
+                padding: '0 14px',
+                borderRadius: 6,
+                border: 'none',
+                background: dirty && !saving ? 'var(--dsw-alias-brand-primary)' : colors.border,
+                color: dirty && !saving ? '#fff' : colors.tertiary,
+                cursor: dirty && !saving ? 'pointer' : 'not-allowed',
+                font: 'inherit',
+                fontSize: 12,
+              },
+            },
+            saving ? '保存中…' : '保存',
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              onClick: onReset,
+              style: {
+                height: 28,
+                padding: '0 12px',
+                borderRadius: 6,
+                border: '1px solid ' + colors.border,
+                background: 'transparent',
+                color: colors.secondary,
+                cursor: 'pointer',
+                font: 'inherit',
+                fontSize: 12,
+              },
+            },
+            '还原',
+          ),
+          note ? h('span', { style: { fontSize: 11, color: colors.tertiary } }, note) : null,
+        )
+      }
+  `
+
+
