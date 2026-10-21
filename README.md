@@ -1,6 +1,6 @@
 # dsh-agent-sync
 
-> 作者：extremity2740938284-create · MIT License
+> 作者：JiangHuai24 · MIT License
 
 把本机上其他 AI 编程助手的会话，实时镜像成 **DeepSeek Harness（DSH）** 的任务；每个应用自动分到自己的工作区，工作区名字就是应用名。
 

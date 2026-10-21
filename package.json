@@ -1,10 +1,10 @@
 {
   "name": "@local/agent-sync",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "Mirror WorkBuddy, ZCode, Codex and other coding agents' sessions into DeepSeek Harness as live tasks, one workspace per application.",
   "type": "module",
   "license": "MIT",
-  "author": "extremity2740938284-create",
+  "author": "dsh-agent-sync contributors",
   "keywords": [
     "dsh",
     "deepseek-harness",
@@ -19,11 +19,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/extremity2740938284-create/dsh-agent-sync.git"
+    "url": "https://github.com/JiangHuai24/dsh-agent-sync.git"
   },
-  "homepage": "https://github.com/extremity2740938284-create/dsh-agent-sync#readme",
+  "homepage": "https://github.com/JiangHuai24/dsh-agent-sync#readme",
   "bugs": {
-    "url": "https://github.com/extremity2740938284-create/dsh-agent-sync/issues"
+    "url": "https://github.com/JiangHuai24/dsh-agent-sync/issues"
   },
   "exports": {
     ".": "./index.js",
