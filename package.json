@@ -1,6 +1,6 @@
 {
   "name": "@local/agent-sync",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "description": "Mirror WorkBuddy, ZCode, Codex and other coding agents' sessions into DeepSeek Harness as live tasks, one workspace per application.",
   "type": "module",
   "license": "MIT",

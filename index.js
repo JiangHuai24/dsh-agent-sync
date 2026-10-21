@@ -98,12 +98,6 @@ export function appRegistry() {
       kind: 'jsonl',
       roots: [path.join(home, '.minimax'), path.join(home, '.minimax-code'), path.join(roaming, 'MiniMax'), path.join(roaming, 'MiniMax Code')],
     },
-    {
-      id: 'trae',
-      name: 'TRAE',
-      kind: 'jsonl',
-      roots: [path.join(home, '.trae'), path.join(roaming, 'Trae'), path.join(roaming, 'TRAE')],
-    },
     { id: 'qoder', name: 'Qoder', kind: 'jsonl', roots: [path.join(home, '.qoder'), path.join(roaming, 'Qoder')] },
     {
       id: 'cline',
@@ -821,8 +815,20 @@ export function eventsForTurn(turn, turnNumber, seqStart, provider, messageIds =
 
 export function apply(ctx, config) {
   const cfg = resolveConfig(config)
-  const persistence = ctx.sessionPersistence
-  const registry = ctx.workspaceRegistry
+  // Resolve through ctx.get: a hard property access here throws when the
+  // service is not ready yet, and the host reports that as "import failed",
+  // which aborts the whole web boot.
+  // Resolve through ctx.get first (a hard property access throws when the
+  // service is not ready and aborts the whole web boot), but keep the direct
+  // property as a fallback: minimal harnesses expose services only there.
+  const resolveService = (name) => (typeof ctx.get === 'function' && ctx.get(name)) || ctx[name]
+  const persistence = resolveService('sessionPersistence')
+  const registry = resolveService('workspaceRegistry')
+  // The session list reads projection-cache rows, so a mirror written straight
+  // through persistence never shows up until a row exists for it.
+  const projectionCache = resolveService('sessionProjectionCache')
+  /** Mirror id produced by the most recent syncSource call (import needs it). */
+  let lastMirrorId = null
 
   /**
    * Merge the editable keys into this plugin's row in the profile patch. The
@@ -1162,6 +1168,7 @@ export function apply(ctx, config) {
             mirrored: report.sources.filter((item) => item.emittedTurns > 0).length,
             errors: report.sources.filter((item) => item.error).length,
             orphaned: report.sources.filter((item) => item.orphaned).length,
+            projectionCache: cacheProbe,
             apps: report.apps.map((app) => ({
               id: app.id,
               name: app.name,
@@ -1219,7 +1226,7 @@ export function apply(ctx, config) {
   const pruneStrayWorkspaces = async () => {
     if (pruned) return
     pruned = true
-    for (const candidate of registry.list()) {
+    for (const candidate of (registry && typeof registry.list === 'function' ? registry.list() : [])) {
       const depth = (candidate.path.match(/agent-sync-workspaces/g) || []).length
       if (depth < 2) continue
       const target = candidate.path
@@ -1288,7 +1295,7 @@ export function apply(ctx, config) {
   }
 
   const pickBase = () => {
-    const all = registry.list()
+    const all = (registry && typeof registry.list === 'function' ? registry.list() : [])
     if (all.length === 0) return undefined
     // Never anchor the root on a workspace this plugin created: doing so would
     // nest agent-sync-workspaces inside itself on the next activation.
@@ -1316,14 +1323,14 @@ export function apply(ctx, config) {
     const dir = path.join(root, app.id)
     fs.mkdirSync(dir, { recursive: true })
     const canonical = fs.realpathSync(dir)
-    let ws = registry.list().find((candidate) => candidate.path.toLowerCase() === canonical.toLowerCase())
+    let ws = (registry && typeof registry.list === 'function' ? registry.list() : []).find((candidate) => candidate.path.toLowerCase() === canonical.toLowerCase())
     if (!ws) {
       try {
         ws = await registry.create(canonical, app.name)
         log('created workspace', app.name, canonical)
       } catch (error) {
         log('workspace create failed', app.id, String(error && error.message))
-        ws = registry.list().find((candidate) => candidate.path.toLowerCase() === canonical.toLowerCase())
+        ws = (registry && typeof registry.list === 'function' ? registry.list() : []).find((candidate) => candidate.path.toLowerCase() === canonical.toLowerCase())
       }
     }
     if (ws) {
@@ -1387,9 +1394,20 @@ export function apply(ctx, config) {
         }
         described.key = key
         described.appId = appId || 'manual'
+        described.hasHuman = true
         if (title) described.title = title
         if (!described.title) described.title = path.basename(file).replace(/\.(jsonl|json|ndjson|log)$/i, '')
         await syncSource(described)
+        const mirrorRecord = store.sources.get(described.key)
+        const mirrorId = (mirrorRecord && mirrorRecord.mirrorId) || lastMirrorId
+        if (mirrorId) {
+          await refreshProjectionCache(mirrorId, {
+            version: FORMAT_VERSION,
+            id: mirrorId,
+            createdAt: (mirrorRecord && mirrorRecord.firstAt) || Date.now(),
+            isSeeded: false,
+          })
+        }
         imported += 1
       } catch (error) {
         failures.push({ file, error: String(error && error.message) })
@@ -1406,6 +1424,55 @@ export function apply(ctx, config) {
     }
   }
 
+  /**
+   * Rebuild this mirror's projection-cache row from its complete log. Without a
+   * row the session list has nothing to render, which is why an imported task
+   * could exist on disk yet never appear in its workspace.
+   */
+  const cacheProbe = { available: false, lastError: null, lastOk: null, lastId: null }
+
+  const refreshProjectionCache = async (id, meta) => {
+    cacheProbe.available = Boolean(projectionCache && typeof projectionCache.coldSnapshot === 'function')
+    cacheProbe.lastId = id
+    if (!cacheProbe.available) {
+      cacheProbe.lastError = 'sessionProjectionCache unavailable'
+      return
+    }
+    let reader
+    try {
+      reader = await persistence.open(id, 'read')
+      // The cache row is matched by header identity (version/createdAt/cwd/
+      // isSeeded), so the stored header must win over a reconstructed one.
+      const stored = reader && reader.header
+      if (stored && stored.id) meta = stored
+      const all = []
+      let from = 0
+      for (;;) {
+        const batch = await reader.read(from, 500)
+        const events = (batch && batch.events) || []
+        if (events.length === 0) break
+        all.push(...events)
+        from += events.length
+        if (all.length > 20000) break
+      }
+      const snapshot = projectionCache.coldSnapshot(meta, 0, all)
+      cacheProbe.lastOk = { events: all.length, asOfSeq: snapshot && snapshot.asOfSeq }
+      cacheProbe.lastError = null
+      log('projection cache rebuilt', id, 'asOfSeq=' + (snapshot && snapshot.asOfSeq))
+    } catch (error) {
+      cacheProbe.lastError = String(error && error.message)
+      log('projection cache rebuild failed', id, cacheProbe.lastError)
+    } finally {
+      if (reader) {
+        try {
+          await reader.close()
+        } catch {
+          // closing a read handle must not break the mirror
+        }
+      }
+    }
+  }
+
   const attach = async (id, ws) => {
     if (!ws) return
     try {
@@ -1418,6 +1485,7 @@ export function apply(ctx, config) {
   }
 
   const syncSource = async (source) => {
+    lastMirrorId = null
     const record = store.sources.get(source.key) || {
       mirrorId: mirrorIdFor(source.key),
       appId: source.appId,
@@ -1582,6 +1650,14 @@ export function apply(ctx, config) {
       store.sources.set(source.key, record)
       dirty = true
       log(`mirrored ${pending.length} turn(s) from ${source.label}: ${source.title || source.key}`, created ? '(new task)' : '')
+      await refreshProjectionCache(id, {
+        version: FORMAT_VERSION,
+        id,
+        createdAt: source.firstAt || Date.now(),
+        cwd: ws ? ws.path : undefined,
+        isSeeded: false,
+      })
+      lastMirrorId = id
     } catch (error) {
       const text = String(error && error.message)
       if (/already exists/i.test(text)) {

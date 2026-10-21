@@ -100,7 +100,7 @@ config:
 
 ## 支持的应用
 
-插件内置 14 个应用的候选数据目录。**只对实际存在且能扫到会话的应用生效**，不会产生空工作区。
+插件内置 13 个应用的候选数据目录。**只对实际存在且能扫到会话的应用生效**，不会产生空工作区。
 
 | id | 应用 | 数据来源 | 解析器 |
 | --- | --- | --- | --- |
@@ -112,7 +112,6 @@ config:
 | `loomy` | Loomy | `~/.loomy`、`%APPDATA%\Loomy` 等 | Claude 风格 JSONL |
 | `raccoon` | Raccoon | `~/.raccoon`、`%APPDATA%\Raccoon` 等 | Claude 风格 JSONL |
 | `minimax` | MiniMax | `~/.minimax`、`%APPDATA%\MiniMax` 等 | Claude 风格 JSONL |
-| `trae` | TRAE | `~/.trae`、`%APPDATA%\Trae` | Claude 风格 JSONL |
 | `qoder` | Qoder | `~/.qoder`、`%APPDATA%\Qoder` | Claude 风格 JSONL |
 | `cline` | Cline | `~/.cline`、`%APPDATA%\Cline` | Claude 风格 JSONL |
 | `codearts` | CodeArts | `~/.codearts`、`%APPDATA%\CodeArts` | Claude 风格 JSONL |
