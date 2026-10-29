@@ -125,22 +125,32 @@ window.__ModuleLoader__.load({
     function normalizeSessions(snapshot) {
       if (!snapshot) return []
       let values
+      // The session store snapshot is `{ byId, ids, phase, ... }` — none of its
+      // top-level values is a session row, so `Object.values` would yield
+      // nothing and the local (live) title index stayed permanently empty.
+      // That made renaming a mirrored task silently unsearchable.
       if (Array.isArray(snapshot)) values = snapshot
       else if (typeof snapshot.values === 'function' && typeof snapshot.get === 'function') values = [...snapshot.values()]
       else if (Array.isArray(snapshot.items)) values = snapshot.items
+      else if (snapshot.byId && typeof snapshot.byId === 'object') values = Object.values(snapshot.byId)
       else if (typeof snapshot === 'object') values = Object.values(snapshot)
-      else return []
       const out = []
       for (const value of values) {
         if (!value || typeof value !== 'object') continue
         const id = value.sessionId || value.id
         if (!id) continue
-        const title =
+        // The session list row exposes `title` only when the session has a
+        // durable title projection; `displayTitle` always exists but falls
+        // back to the workspace basename or the raw id. Use displayTitle
+        // only when it is a real (renamed) title, never when it is the id.
+        const projected =
           value.title ||
           (value.projections && value.projections.title) ||
           (value.projection && value.projection.title) ||
           value.customTitle ||
           ''
+        const display = typeof value.displayTitle === 'string' ? value.displayTitle : ''
+        const title = projected || (display && display !== String(id) ? display : '')
         out.push({ id: String(id), title: String(title) })
       }
       return out
@@ -242,9 +252,13 @@ window.__ModuleLoader__.load({
       }, [open])
 
       const index = React.useMemo(() => {
+        // Live projection first: a session renamed in DSH keeps its old
+        // `[App] original` string in the mirror bookkeeping, so the host
+        // snapshot must never win over the title the UI currently shows —
+        // otherwise the renamed task becomes unsearchable by its new name.
         const merged = new Map()
-        for (const entry of hostIndex) merged.set(entry.id, { id: entry.id, title: entry.title })
-        for (const entry of hookIndex) if (!merged.has(entry.id)) merged.set(entry.id, entry)
+        for (const entry of hookIndex) if (entry && entry.title) merged.set(entry.id, entry)
+        for (const entry of hostIndex) if (!merged.has(entry.id)) merged.set(entry.id, { id: entry.id, title: entry.title })
         return [...merged.values()]
       }, [hostIndex, hookIndex])
 

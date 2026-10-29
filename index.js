@@ -974,11 +974,45 @@ export function apply(ctx, config) {
   // The browser cannot read the mirror bookkeeping, and the session hook the
   // slots expose does not promise a title field. Serve the title index over a
   // read-only same-origin route instead of guessing a snapshot shape.
-  const mirroredTitles = () => {
+  /**
+   * Title index for the search palette.
+   *
+   * ⚠️ The mirror bookkeeping holds the title agent-sync itself wrote
+   * (`[App] original`), which goes stale the moment the user renames the task
+   * inside DSH. The live projection cache is the authority for the current
+   * title, so read it first and fall back to the bookkeeping only when the
+   * cache has no row (a mirror that was never listed, or a cache miss).
+   * Without this, a renamed task stops matching its new name entirely.
+   */
+  const mirroredTitles = async () => {
+    // The cache only answers for the exact stored header (version / createdAt /
+    // cwd / isSeeded), so the identity must come from persistence, never from
+    // a reconstructed object. One `list()` covers every mirror in this store.
+    let headerById = new Map()
+    if (projectionCache && typeof projectionCache.cachedSnapshot === 'function'
+      && persistence && typeof persistence.list === 'function') {
+      try {
+        const snapshots = await persistence.list()
+        headerById = new Map(snapshots.map((snapshot) => [snapshot.header.id, snapshot.header]))
+      } catch {
+        headerById = new Map()
+      }
+    }
     const items = []
     for (const record of store.sources.values()) {
       if (!record || record.archived || !record.title) continue
-      items.push({ id: record.mirrorId, title: record.title, app: record.appId || null })
+      let title = record.title
+      const header = headerById.get(record.mirrorId)
+      if (header !== undefined) {
+        try {
+          const live = projectionCache.cachedSnapshot(header, ['title'])
+          const value = live && live.values && live.values.title
+          if (typeof value === 'string' && value.trim() !== '') title = value
+        } catch {
+          // The cache is an optimization: a miss must never break the index.
+        }
+      }
+      items.push({ id: record.mirrorId, title, app: record.appId || null })
     }
     return items
   }
@@ -1054,8 +1088,14 @@ export function apply(ctx, config) {
       webServer.register({
         kind: 'exact',
         path: '/agent-sync/sessions',
-        handler: (_req, res) => {
-          const payload = JSON.stringify({ at: Date.now(), sessions: mirroredTitles() })
+        handler: async (_req, res) => {
+          let sessions = []
+          try {
+            sessions = await mirroredTitles()
+          } catch {
+            sessions = []
+          }
+          const payload = JSON.stringify({ at: Date.now(), sessions })
           res.writeHead(200, {
             'content-type': 'application/json; charset=utf-8',
             'cache-control': 'no-store',
