@@ -204,7 +204,9 @@ test('the engine mirrors a source into a per-app workspace and appends new turns
     const route = harness.routes.find((candidate) => candidate.path === '/agent-sync/sessions')
     assert.ok(route, 'the host exposes a title index route')
     let payload = ''
-    route.handler({}, { writeHead() {}, end(body) { payload = body } })
+    // The handler is async (it reads the live projection cache before answering),
+    // so the test has to await it — otherwise payload is still empty here.
+    await route.handler({}, { writeHead() {}, end(body) { payload = body } })
     const hostIndex = JSON.parse(payload)
     assert.ok(
       hostIndex.sessions.some((item) => item.id === entry.header.id && item.title.includes('集成测试')),

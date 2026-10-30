@@ -810,6 +810,105 @@ export function eventsForTurn(turn, turnNumber, seqStart, provider, messageIds =
 }
 
 // ---------------------------------------------------------------------------
+// Log invariants (DSH v4 session format)
+// ---------------------------------------------------------------------------
+//
+// Three rules the loader enforces when it opens a stored log. Violating any of
+// them makes the whole session unreadable — not just the offending event — and
+// the host reports it as "corrupt", so the task silently disappears from the
+// list. agent-sync writes logs directly, therefore it has to police these
+// itself; the loader is not a safety net.
+//
+//   1. `system/message` must be the FIRST surface event of the session. It is
+//      the protected head. Appending one later (mid-session) is invalid and
+//      cannot be fixed by a later append — see {@link assertNoMidSessionSystem}.
+//   2. Surface-eligible events (user/assistant/system/tool result) must carry
+//      `surfaceOp`. agent-sync passes 'append' explicitly; anything without it
+//      is dropped by the loader.
+//   3. Every event seq must be strictly consecutive (`event.seq === index`).
+//      Inserting or deleting one event means renumbering everything after it.
+//
+// The checks below run BEFORE the append, so a bad batch never reaches disk.
+
+/** The surface event types the loader treats as visible conversation content. */
+export const SURFACE_TYPES = new Set([
+  'user/message',
+  'assistant/message',
+  'system/message',
+  'tool/result',
+])
+
+/**
+ * Assert a batch about to be appended respects the protected-head rule.
+ *
+ * A `system/message` is legal only when it would become the very first surface
+ * event of the log (i.e. the log has no surface events yet). Anything else —
+ * including "I want to refresh the system prompt" — must be dropped and left to
+ * the loader, which rebuilds the head from the stored header.
+ *
+ * @param existingSurfaceCount how many surface events the log already holds
+ * @param batch                events about to be appended
+ * @throws when the batch would place a system/message after existing surface content
+ */
+export function assertNoMidSessionSystem(existingSurfaceCount, batch) {
+  let surfacesBefore = existingSurfaceCount
+  for (const event of batch) {
+    if (!event || !SURFACE_TYPES.has(event.type)) continue
+    if (event.type === 'system/message' && surfacesBefore > 0) {
+      throw new Error(
+        'refusing to append system/message mid-session: the DSH v4 loader requires the system '
+        + 'message to be the first surface event, and appending one later makes the entire stored '
+        + 'log unreadable (fixed only by deleting the event and renumbering every later seq).',
+      )
+    }
+    surfacesBefore += 1
+  }
+}
+
+/**
+ * Assert the batch's seq numbers continue exactly from `firstSeq` and are
+ * strictly consecutive. The loader hard-checks `event.seq === index`; a gap or
+ * a duplicate turns the log into "corrupt" on the next open.
+ *
+ * @param batch    events about to be appended, in order
+ * @param firstSeq the seq the first appended event must carry
+ * @throws when any event does not line up
+ */
+export function assertSeqConsecutive(batch, firstSeq) {
+  let expected = firstSeq
+  for (const event of batch) {
+    if (!event || typeof event.seq !== 'number') {
+      throw new Error('refusing to append an event without a numeric seq')
+    }
+    if (event.seq !== expected) {
+      throw new Error(
+        `refusing to append event with seq ${event.seq} where ${expected} was expected: `
+        + 'the DSH v4 loader requires strictly consecutive seqs and treats a gap as corruption.',
+      )
+    }
+    expected += 1
+  }
+}
+
+/**
+ * Count surface events in a slice of stored events.
+ *
+ * Used to decide whether a `system/message` would still be the head. Reading a
+ * whole log is too expensive on every sync tick, so the caller keeps a running
+ * count in the mirror record and only falls back to reading when it is absent.
+ *
+ * @param events stored events, in seq order
+ * @returns how many of them are surface-eligible
+ */
+export function countSurfaceEvents(events) {
+  let n = 0
+  for (const event of events) {
+    if (event && SURFACE_TYPES.has(event.type)) n += 1
+  }
+  return n
+}
+
+// ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
 
@@ -1471,6 +1570,40 @@ export function apply(ctx, config) {
    */
   const cacheProbe = { available: false, lastError: null, lastOk: null, lastId: null }
 
+  /**
+   * Count surface events already stored for a session.
+   *
+   * Only called when the mirror record has no `surfaceEvents` counter yet (a
+   * record written by an older version). Steady state uses the cached count,
+   * because reading a whole log on every sync tick would be wasteful.
+   */
+  const surfaceCountOf = async (id) => {
+    let reader
+    try {
+      reader = await persistence.open(id, 'read')
+      const all = []
+      let from = 0
+      for (;;) {
+        const batch = await reader.read(from, 500)
+        const events = (batch && batch.events) || []
+        if (events.length === 0) break
+        all.push(...events)
+        from += events.length
+        if (all.length > 20000) break
+      }
+      return countSurfaceEvents(all)
+    } catch {
+      // Cannot tell: assume the log already has surface content, which makes the
+      // guard refuse a system/message append. Refusing is the safe direction —
+      // a wrong "allow" would corrupt the log permanently.
+      return Number.POSITIVE_INFINITY
+    } finally {
+      if (reader) {
+        try { await reader.close() } catch { /* closing a failed handle must not throw */ }
+      }
+    }
+  }
+
   const refreshProjectionCache = async (id, meta) => {
     cacheProbe.available = Boolean(projectionCache && typeof projectionCache.coldSnapshot === 'function')
     cacheProbe.lastId = id
@@ -1620,6 +1753,10 @@ export function apply(ctx, config) {
     let created = false
     try {
       if (!snapshot && pending.length === 0) {
+        // Nothing to write yet. Creating the log here would leave an empty
+        // `isSeeded:false` session on disk with no surface content — legal but
+        // pointless, and the shape that has produced confusing "empty fork"
+        // entries in the list. Wait for real turns instead.
         store.sources.set(source.key, record)
         return
       }
@@ -1680,8 +1817,19 @@ export function apply(ctx, config) {
         record.title = desiredTitle
         record.firstUserSeq = firstUserSeq
       }
+      // Guard the batch before it reaches disk. A bad append is not recoverable
+      // by a later append: the loader rejects the whole log on the next open.
+      const surfaceBefore = created
+        ? 0
+        : (typeof record.surfaceEvents === 'number'
+          ? record.surfaceEvents
+          : await surfaceCountOf(id))
+      assertNoMidSessionSystem(surfaceBefore, events)
+      assertSeqConsecutive(events, seq - events.length)
+
       await handle.append(events)
       await handle.flush()
+      record.surfaceEvents = surfaceBefore + countSurfaceEvents(events)
       record.lastEventCount = seq
       record.emittedTurns = absoluteEnd
       record.droppedTurns = source.droppedTurns

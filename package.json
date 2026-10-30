@@ -1,6 +1,6 @@
 {
   "name": "@local/agent-sync",
-  "version": "1.9.3",
+  "version": "1.10.0",
   "description": "Mirror WorkBuddy, ZCode, Codex and other coding agents' sessions into DeepSeek Harness as live tasks, one workspace per application.",
   "type": "module",
   "license": "MIT",
@@ -44,7 +44,7 @@
     "test/safety.gate.mjs"
   ],
   "scripts": {
-    "test": "node --test test/core.test.mjs test/engine.test.mjs test/client.test.mjs && node test/bundle.gate.mjs && node test/safety.gate.mjs",
+    "test": "node --test test/core.test.mjs test/engine.test.mjs test/client.test.mjs && node test/bundle.gate.mjs && node test/safety.gate.mjs && node test/invariants.gate.mjs",
     "test:format": "node --test test/format.test.mjs"
   },
   "dsh": {
